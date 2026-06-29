@@ -7,6 +7,7 @@ const cors    = require('cors');
 const pagamentoRoutes = require('./routes/pagamento');
 const pedidoRoutes    = require('./routes/pedidos');
 const webhookRoutes   = require('./routes/webhook');
+const authRoutes      = require('./routes/auth');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -33,6 +34,7 @@ app.use(express.json());
 app.use('/api/pagamento', pagamentoRoutes);
 app.use('/api/pedidos',   pedidoRoutes);
 app.use('/api/webhook',   webhookRoutes);
+app.use('/api/auth',      authRoutes);
 
 // ── HEALTH CHECK ─────────────────────────────────────────
 app.get('/', (req, res) => {
