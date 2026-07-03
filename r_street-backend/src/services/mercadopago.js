@@ -52,10 +52,6 @@ async function criarPreferencia(pedido, pedidoId) {
         excluded_payment_types: [],
         installments: 12,
       },
-      shipments: {
-        cost: pedido.frete.valor,
-        mode: 'not_specified',
-      },
       back_urls: {
         success: `${FRONTEND_URL}/confirmacao.html?status=approved`,
         failure: `${FRONTEND_URL}/confirmacao.html?status=failure`,
