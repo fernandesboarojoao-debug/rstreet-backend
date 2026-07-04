@@ -4,10 +4,13 @@ require('express-async-errors');
 const express = require('express');
 const cors    = require('cors');
 
-const pagamentoRoutes = require('./routes/pagamento');
-const pedidoRoutes    = require('./routes/pedidos');
-const webhookRoutes   = require('./routes/webhook');
-const authRoutes      = require('./routes/auth');
+const pagamentoRoutes  = require('./routes/pagamento');
+const pedidoRoutes     = require('./routes/pedidos');
+const webhookRoutes    = require('./routes/webhook');
+const authRoutes       = require('./routes/auth');
+const produtosRoutes   = require('./routes/produtos');
+const pedidosAdminRoutes = require('./routes/pedidosAdmin');
+const adminRoutes     = require('./routes/admin');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -35,6 +38,9 @@ app.use('/api/pagamento', pagamentoRoutes);
 app.use('/api/pedidos',   pedidoRoutes);
 app.use('/api/webhook',   webhookRoutes);
 app.use('/api/auth',      authRoutes);
+app.use('/api/produtos',  produtosRoutes);
+app.use('/api/admin',     pedidosAdminRoutes);
+app.use('/api/admin',     adminRoutes);
 
 // ── HEALTH CHECK ─────────────────────────────────────────
 app.get('/', (req, res) => {
