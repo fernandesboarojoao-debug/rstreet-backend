@@ -1,9 +1,12 @@
 // src/routes/pedidosAdmin.js
 const express = require('express');
 const router  = express.Router();
+const { requireAdmin } = require('../middleware/adminAuth');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
+
+router.use(requireAdmin);
 
 async function sb(path, opts = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {

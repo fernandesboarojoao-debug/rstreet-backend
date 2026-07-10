@@ -1,11 +1,13 @@
 // src/routes/produtos.js
 const express = require('express');
 const router  = express.Router();
-const db      = require('../services/db');
+const { requireAdmin } = require('../middleware/adminAuth');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const IMAGE_BUCKET = 'product-images';
+
+router.use(requireAdmin);
 
 async function sb(path, opts = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {

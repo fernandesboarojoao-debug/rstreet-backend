@@ -1,60 +1,55 @@
-// src/controllers/webhookController.js
 const db = require('../services/db');
 const mp = require('../services/mercadopago');
 
 async function receberWebhook(req, res) {
-  // Responde imediatamente para o MP não reenviar
   res.sendStatus(200);
 
   try {
     const body = JSON.parse(req.body.toString());
-    console.log('🔔 Webhook recebido:', JSON.stringify(body));
-
-    // MP envia diferentes tipos de notificação
-    const tipo      = body.type || body.topic;
+    const tipo = body.type || body.topic;
     const paymentId = body.data?.id || body.id;
 
     if (tipo !== 'payment' || !paymentId) return;
 
-    // Busca os detalhes do pagamento no MP
     const pagamento = await mp.buscarPagamento(paymentId);
-    console.log(`💳 Pagamento #${paymentId} status: ${pagamento.status}`);
-
     const pedidoId = pagamento.external_reference;
     if (!pedidoId) return;
 
-    const statusMap = {
-      approved:   'pago',
-      pending:    'pendente',
-      in_process: 'em_analise',
-      rejected:   'recusado',
-      cancelled:  'cancelado',
-      refunded:   'reembolsado',
-    };
+    const pedidoAtual = await db.buscarPedido(pedidoId);
+    if (!pedidoAtual) return;
 
+    const statusMap = {
+      approved: 'pago',
+      pending: 'pendente',
+      in_process: 'em_analise',
+      rejected: 'recusado',
+      cancelled: 'cancelado',
+      refunded: 'reembolsado',
+    };
     const novoStatus = statusMap[pagamento.status] || pagamento.status;
 
-    // Atualiza o pedido no banco
-    await db.atualizarPedido(pedidoId, {
-      status:         novoStatus,
-      mp_payment_id:  String(paymentId),
-      pago_em:        pagamento.status === 'approved' ? new Date().toISOString() : null,
-    });
-
-    console.log(`✅ Pedido #${pedidoId} atualizado para: ${novoStatus}`);
-
-    // Se aprovado, reduz estoque de cada produto
-    if (pagamento.status === 'approved') {
-      const pedido = await db.buscarPedido(pedidoId);
-      if (pedido) {
+    if (pagamento.status === 'approved' && pedidoAtual.status !== 'pago') {
+      try {
         const itens = await buscarItensPedido(pedidoId);
         for (const item of itens) {
           await db.reduzirEstoque(item.produto_id, item.quantidade);
-          console.log(`📦 Estoque reduzido: produto #${item.produto_id} -${item.quantidade}`);
         }
+      } catch (estoqueErr) {
+        await db.atualizarPedido(pedidoId, {
+          status: 'estoque_indisponivel',
+          mp_payment_id: String(paymentId),
+          pago_em: new Date().toISOString(),
+        });
+        console.error('Pagamento aprovado com problema de estoque:', estoqueErr.message);
+        return;
       }
     }
 
+    await db.atualizarPedido(pedidoId, {
+      status: novoStatus,
+      mp_payment_id: String(paymentId),
+      pago_em: pagamento.status === 'approved' ? (pedidoAtual.pago_em || new Date().toISOString()) : null,
+    });
   } catch (err) {
     console.error('Erro no webhook:', err.message);
   }

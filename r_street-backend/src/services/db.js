@@ -57,6 +57,7 @@ async function criarItensPedido(pedidoId, itens) {
     quantidade:     i.quantidade,
     preco_unitario: i.preco_unitario,
     total:          i.preco_unitario * i.quantidade,
+    tamanho:        i.tamanho || null,
   }));
   return sbFetch('/itens_pedido', { method: 'POST', body: JSON.stringify(rows) });
 }
@@ -78,18 +79,34 @@ async function buscarPedidoPorMPId(mpPaymentId) {
   return rows?.[0] || null;
 }
 
+async function buscarProdutosPorIds(ids) {
+  const limpos = [...new Set((ids || []).map(id => Number(id)).filter(Number.isFinite))];
+  if (!limpos.length) return [];
+  return sbFetch(`/produtos?id=in.(${limpos.join(',')})&select=id,nome,preco,estoque,ativo`);
+}
+
 // ── ESTOQUE ──────────────────────────────────────────────
 
 async function reduzirEstoque(produtoId, quantidade) {
-  // Busca estoque atual
-  const rows = await sbFetch(`/produtos?id=eq.${produtoId}&select=id,estoque`);
-  const produto = rows?.[0];
-  if (!produto) return;
-  const novoEstoque = Math.max(0, produto.estoque - quantidade);
-  return sbFetch(`/produtos?id=eq.${produtoId}`, {
+  const atual = await sbFetch(`/produtos?id=eq.${produtoId}&ativo=eq.true&select=id,estoque`);
+  const produto = atual?.[0];
+  if (!produto || Number(produto.estoque) < Number(quantidade)) {
+    const err = new Error(`Estoque insuficiente para o produto #${produtoId}.`);
+    err.status = 409;
+    throw err;
+  }
+
+  const novoEstoque = Number(produto.estoque) - Number(quantidade);
+  const rows = await sbFetch(`/produtos?id=eq.${produtoId}&estoque=eq.${produto.estoque}`, {
     method: 'PATCH',
     body: JSON.stringify({ estoque: novoEstoque }),
   });
+  if (!rows?.length) {
+    const err = new Error(`Estoque insuficiente para o produto #${produtoId}.`);
+    err.status = 409;
+    throw err;
+  }
+  return rows[0];
 }
 
 module.exports = {
@@ -98,5 +115,6 @@ module.exports = {
   atualizarPedido,
   buscarPedido,
   buscarPedidoPorMPId,
+  buscarProdutosPorIds,
   reduzirEstoque,
 };
