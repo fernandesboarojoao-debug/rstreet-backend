@@ -77,6 +77,14 @@ router.get('/', async (req, res) => {
   res.json(data);
 });
 
+router.get('/:id/variantes', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ erro: 'Produto inválido' });
+
+  const data = await sb(`/produto_variantes?produto_id=eq.${id}&select=*&order=cor.asc,tamanho.asc`);
+  res.json(data || []);
+});
+
 // POST /api/produtos/upload-image — salva foto no Supabase Storage
 router.post('/upload-image', async (req, res) => {
   const { dataUrl, name } = req.body || {};
@@ -90,6 +98,41 @@ router.post('/upload-image', async (req, res) => {
 router.post('/', async (req, res) => {
   const data = await sb('/produtos', { method: 'POST', body: JSON.stringify(req.body) });
   res.json(data);
+});
+
+router.put('/:id/variantes', async (req, res) => {
+  const produtoId = Number(req.params.id);
+  if (!Number.isInteger(produtoId) || produtoId <= 0) return res.status(400).json({ erro: 'Produto inválido' });
+
+  const entrada = Array.isArray(req.body?.variantes) ? req.body.variantes : [];
+  const vistos = new Set();
+  const variantes = [];
+
+  for (const item of entrada) {
+    const cor = String(item.cor || '').trim();
+    const tamanho = String(item.tamanho || '').trim();
+    const estoque = Math.max(0, parseInt(item.estoque, 10) || 0);
+    const ativo = item.ativo !== false;
+    if (!cor || !tamanho) continue;
+
+    const chave = `${cor.toLowerCase()}|${tamanho.toUpperCase()}`;
+    if (vistos.has(chave)) {
+      const err = new Error(`Combinação duplicada: ${cor} / ${tamanho}`);
+      err.status = 400;
+      throw err;
+    }
+    vistos.add(chave);
+    variantes.push({ produto_id: produtoId, cor, tamanho, estoque, ativo });
+  }
+
+  await sb(`/produto_variantes?produto_id=eq.${produtoId}`, { method: 'DELETE' });
+  if (!variantes.length) return res.json([]);
+
+  const data = await sb('/produto_variantes', {
+    method: 'POST',
+    body: JSON.stringify(variantes),
+  });
+  res.json(data || []);
 });
 
 // PATCH /api/produtos/:id — atualiza
