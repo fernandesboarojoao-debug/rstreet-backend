@@ -15,7 +15,7 @@ async function criarPreferencia(pedido, pedidoId) {
 
   const items = pedido.itens.map(item => ({
     id:          String(item.id),
-    title:       item.nome,
+    title:       [item.nome, item.cor, item.tamanho].filter(Boolean).join(' - '),
     quantity:    item.quantidade,
     unit_price:  Number(item.preco_unitario),
     currency_id: 'BRL',

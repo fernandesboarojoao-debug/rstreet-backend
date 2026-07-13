@@ -99,3 +99,43 @@ CREATE POLICY "Backend total produtos"
 CREATE POLICY "Public read active produtos"
   ON produtos FOR SELECT TO anon, authenticated
   USING (ativo = true);
+
+-- Atualizacoes usadas pelo site atual
+ALTER TABLE pedidos
+  ADD COLUMN IF NOT EXISTS envio_status TEXT,
+  ADD COLUMN IF NOT EXISTS codigo_rastreio TEXT,
+  ADD COLUMN IF NOT EXISTS rastreio_url TEXT;
+
+ALTER TABLE itens_pedido
+  ADD COLUMN IF NOT EXISTS produto_variante_id BIGINT,
+  ADD COLUMN IF NOT EXISTS cor TEXT;
+
+CREATE TABLE IF NOT EXISTS produto_variantes (
+  id BIGSERIAL PRIMARY KEY,
+  produto_id BIGINT NOT NULL REFERENCES produtos(id) ON DELETE CASCADE,
+  cor TEXT NOT NULL CHECK (btrim(cor) <> ''),
+  tamanho TEXT NOT NULL CHECK (btrim(tamanho) <> ''),
+  estoque INTEGER NOT NULL DEFAULT 0 CHECK (estoque >= 0),
+  ativo BOOLEAN NOT NULL DEFAULT true,
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS produto_variantes_produto_cor_tamanho_unique
+  ON produto_variantes (produto_id, lower(btrim(cor)), lower(btrim(tamanho)));
+
+CREATE INDEX IF NOT EXISTS idx_produto_variantes_produto_id ON produto_variantes(produto_id);
+CREATE INDEX IF NOT EXISTS idx_itens_pedido_produto_variante_id ON itens_pedido(produto_variante_id);
+
+ALTER TABLE produto_variantes ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Produto variantes leitura publica ativas" ON produto_variantes;
+CREATE POLICY "Produto variantes leitura publica ativas"
+  ON produto_variantes FOR SELECT TO anon, authenticated
+  USING (
+    ativo = true
+    AND EXISTS (
+      SELECT 1 FROM produtos p
+      WHERE p.id = produto_variantes.produto_id
+        AND p.ativo = true
+    )
+  );

@@ -38,7 +38,15 @@ router.get('/pedidos/:id/itens', async (req, res) => {
 
 // PATCH /api/admin/pedidos/:id — atualiza status
 router.patch('/pedidos/:id', async (req, res) => {
-  const data = await sb(`/pedidos?id=eq.${req.params.id}`, { method: 'PATCH', body: JSON.stringify(req.body) });
+  const permitidos = ['status', 'envio_status', 'codigo_rastreio', 'rastreio_url'];
+  const payload = {};
+  for (const campo of permitidos) {
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, campo)) payload[campo] = req.body[campo] || null;
+  }
+  if (!Object.keys(payload).length) return res.status(400).json({ erro: 'Nenhum campo permitido para atualizar.' });
+  payload.atualizado_em = new Date().toISOString();
+
+  const data = await sb(`/pedidos?id=eq.${req.params.id}`, { method: 'PATCH', body: JSON.stringify(payload) });
   res.json(data);
 });
 

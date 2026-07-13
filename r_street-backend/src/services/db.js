@@ -76,6 +76,21 @@ async function buscarPedido(pedidoId) {
   return rows?.[0] || null;
 }
 
+async function buscarPedidoPorIdEmail(pedidoId, email) {
+  const id = Number(pedidoId);
+  const emailLimpo = String(email || '').trim().toLowerCase();
+  if (!Number.isInteger(id) || id <= 0 || !emailLimpo) return null;
+
+  const rows = await sbFetch(`/pedidos?id=eq.${id}&cliente_email=ilike.${encodeURIComponent(emailLimpo)}&select=id,cliente_nome,cliente_email,status,envio_status,codigo_rastreio,rastreio_url,frete_tipo,total,criado_em,pago_em`);
+  return rows?.[0] || null;
+}
+
+async function buscarItensPedido(pedidoId) {
+  const id = Number(pedidoId);
+  if (!Number.isInteger(id) || id <= 0) return [];
+  return sbFetch(`/itens_pedido?pedido_id=eq.${id}&select=nome_produto,quantidade,cor,tamanho`);
+}
+
 async function buscarPedidoPorMPId(mpPaymentId) {
   const rows = await sbFetch(`/pedidos?mp_payment_id=eq.${mpPaymentId}&select=*`);
   return rows?.[0] || null;
@@ -154,6 +169,8 @@ module.exports = {
   criarItensPedido,
   atualizarPedido,
   buscarPedido,
+  buscarPedidoPorIdEmail,
+  buscarItensPedido,
   buscarPedidoPorMPId,
   buscarProdutosPorIds,
   buscarVariantesPorIds,
