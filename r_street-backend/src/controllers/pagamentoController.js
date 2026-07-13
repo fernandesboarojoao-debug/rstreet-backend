@@ -4,8 +4,11 @@ const { calcularFreteSeguro } = require('../services/frete');
 
 async function montarPedidoSeguro(pedidoData) {
   const ids = pedidoData.itens.map(i => i.id);
+  const varianteIds = pedidoData.itens.map(i => i.produto_variante_id).filter(Boolean);
   const produtos = await db.buscarProdutosPorIds(ids);
+  const variantes = await db.buscarVariantesPorIds(varianteIds);
   const porId = new Map(produtos.map(p => [Number(p.id), p]));
+  const variantePorId = new Map(variantes.map(v => [Number(v.id), v]));
 
   const itens = pedidoData.itens.map(item => {
     const produtoId = Number(item.id);
@@ -17,7 +20,24 @@ async function montarPedidoSeguro(pedidoData) {
       err.status = 400;
       throw err;
     }
-    if (Number(produto.estoque) < quantidade) {
+    let estoqueDisponivel = Number(produto.estoque);
+    let cor = item.cor || null;
+    let tamanho = item.tamanho || null;
+    let produto_variante_id = item.produto_variante_id ? Number(item.produto_variante_id) : null;
+
+    if (produto_variante_id) {
+      const variante = variantePorId.get(produto_variante_id);
+      if (!variante || Number(variante.produto_id) !== produtoId || variante.ativo === false) {
+        const err = new Error('Variacao indisponivel no catalogo.');
+        err.status = 400;
+        throw err;
+      }
+      estoqueDisponivel = Number(variante.estoque);
+      cor = variante.cor || cor;
+      tamanho = variante.tamanho || tamanho;
+    }
+
+    if (estoqueDisponivel < quantidade) {
       const err = new Error(`Estoque insuficiente para ${produto.nome}.`);
       err.status = 409;
       throw err;
@@ -26,9 +46,11 @@ async function montarPedidoSeguro(pedidoData) {
     return {
       id: produto.id,
       nome: produto.nome,
+      produto_variante_id,
       quantidade,
       preco_unitario: Number(produto.preco),
-      tamanho: item.tamanho || null,
+      cor,
+      tamanho,
     };
   });
 

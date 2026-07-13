@@ -32,7 +32,7 @@ async function receberWebhook(req, res) {
       try {
         const itens = await buscarItensPedido(pedidoId);
         for (const item of itens) {
-          await db.reduzirEstoque(item.produto_id, item.quantidade);
+          await db.reduzirEstoque(item.produto_id, item.quantidade, item.produto_variante_id || null);
         }
       } catch (estoqueErr) {
         await db.atualizarPedido(pedidoId, {
