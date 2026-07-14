@@ -7,8 +7,10 @@ async function montarPedidoSeguro(pedidoData) {
   const varianteIds = pedidoData.itens.map(i => i.produto_variante_id).filter(Boolean);
   const produtos = await db.buscarProdutosPorIds(ids);
   const variantes = await db.buscarVariantesPorIds(varianteIds);
+  const variantesProdutos = await db.buscarVariantesPorProdutoIds(ids);
   const porId = new Map(produtos.map(p => [Number(p.id), p]));
   const variantePorId = new Map(variantes.map(v => [Number(v.id), v]));
+  const produtosComVariantes = new Set(variantesProdutos.map(v => Number(v.produto_id)));
 
   const itens = pedidoData.itens.map(item => {
     const produtoId = Number(item.id);
@@ -24,6 +26,12 @@ async function montarPedidoSeguro(pedidoData) {
     let cor = item.cor || null;
     let tamanho = item.tamanho || null;
     let produto_variante_id = item.produto_variante_id ? Number(item.produto_variante_id) : null;
+
+    if (produtosComVariantes.has(produtoId) && !produto_variante_id) {
+      const err = new Error('Escolha cor e tamanho antes de finalizar a compra.');
+      err.status = 400;
+      throw err;
+    }
 
     if (produto_variante_id) {
       const variante = variantePorId.get(produto_variante_id);

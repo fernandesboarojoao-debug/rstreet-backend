@@ -108,6 +108,12 @@ async function buscarVariantesPorIds(ids) {
   return sbFetch(`/produto_variantes?id=in.(${limpos.join(',')})&select=id,produto_id,cor,tamanho,estoque,ativo`);
 }
 
+async function buscarVariantesPorProdutoIds(ids) {
+  const limpos = [...new Set((ids || []).map(id => Number(id)).filter(Number.isFinite))];
+  if (!limpos.length) return [];
+  return sbFetch(`/produto_variantes?produto_id=in.(${limpos.join(',')})&ativo=eq.true&select=id,produto_id,cor,tamanho,estoque,ativo`);
+}
+
 // ── ESTOQUE ──────────────────────────────────────────────
 
 async function reduzirEstoque(produtoId, quantidade, varianteId = null) {
@@ -174,5 +180,6 @@ module.exports = {
   buscarPedidoPorMPId,
   buscarProdutosPorIds,
   buscarVariantesPorIds,
+  buscarVariantesPorProdutoIds,
   reduzirEstoque,
 };
