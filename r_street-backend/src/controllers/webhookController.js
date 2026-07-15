@@ -58,9 +58,15 @@ async function receberWebhook(req, res) {
 async function buscarItensPedido(pedidoId) {
   const SUPABASE_URL = process.env.SUPABASE_URL;
   const SUPABASE_KEY = process.env.SUPABASE_KEY;
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/itens_pedido?pedido_id=eq.${pedidoId}&select=*`, {
+  const id = Number(pedidoId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error('Pedido invalido no webhook.');
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/itens_pedido?pedido_id=eq.${id}&select=*`, {
     headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
   });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Falha ao buscar itens do pedido: ${res.status} ${text}`);
+  }
   return res.json();
 }
 

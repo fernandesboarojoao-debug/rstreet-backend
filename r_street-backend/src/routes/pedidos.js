@@ -6,7 +6,12 @@ const router = express.Router();
 
 router.post('/acompanhar', async (req, res) => {
   const { id, email } = req.body || {};
-  const pedido = await db.buscarPedidoPorIdEmail(id, email);
+  const pedidoId = Number(id);
+  const emailLimpo = String(email || '').trim();
+  if (!Number.isInteger(pedidoId) || pedidoId <= 0 || !emailLimpo || emailLimpo.length > 254) {
+    return res.status(400).json({ erro: 'Informe o numero do pedido e o e-mail da compra.' });
+  }
+  const pedido = await db.buscarPedidoPorIdEmail(pedidoId, emailLimpo);
   if (!pedido) return res.status(404).json({ erro: 'Pedido nao encontrado para este e-mail.' });
 
   const itens = await db.buscarItensPedido(pedido.id);
