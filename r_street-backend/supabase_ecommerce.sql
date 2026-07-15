@@ -116,14 +116,30 @@ CREATE TABLE IF NOT EXISTS produto_variantes (
   cor TEXT NOT NULL CHECK (btrim(cor) <> ''),
   tamanho TEXT NOT NULL CHECK (btrim(tamanho) <> ''),
   estoque INTEGER NOT NULL DEFAULT 0 CHECK (estoque >= 0),
+  preco NUMERIC(10,2),
+  preco_antigo NUMERIC(10,2),
+  imagem_url TEXT,
+  imagens TEXT[] DEFAULT '{}',
+  cor_hex TEXT,
+  ordem INTEGER DEFAULT 0,
   ativo BOOLEAN NOT NULL DEFAULT true,
   criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE produto_variantes
+  ADD COLUMN IF NOT EXISTS preco NUMERIC(10,2),
+  ADD COLUMN IF NOT EXISTS preco_antigo NUMERIC(10,2),
+  ADD COLUMN IF NOT EXISTS imagem_url TEXT,
+  ADD COLUMN IF NOT EXISTS imagens TEXT[] DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS cor_hex TEXT,
+  ADD COLUMN IF NOT EXISTS ordem INTEGER DEFAULT 0;
 
 CREATE UNIQUE INDEX IF NOT EXISTS produto_variantes_produto_cor_tamanho_unique
   ON produto_variantes (produto_id, lower(btrim(cor)), lower(btrim(tamanho)));
 
 CREATE INDEX IF NOT EXISTS idx_produto_variantes_produto_id ON produto_variantes(produto_id);
+CREATE INDEX IF NOT EXISTS idx_produto_variantes_produto_cor
+  ON produto_variantes (produto_id, lower(btrim(cor)));
 CREATE INDEX IF NOT EXISTS idx_itens_pedido_produto_variante_id ON itens_pedido(produto_variante_id);
 
 ALTER TABLE produto_variantes ENABLE ROW LEVEL SECURITY;

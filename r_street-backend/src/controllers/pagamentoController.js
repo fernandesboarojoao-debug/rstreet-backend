@@ -45,6 +45,10 @@ async function montarPedidoSeguro(pedidoData) {
       tamanho = variante.tamanho || tamanho;
     }
 
+    const precoUnitario = produto_variante_id && variantePorId.get(produto_variante_id)?.preco != null
+      ? Number(variantePorId.get(produto_variante_id).preco)
+      : Number(produto.preco);
+
     if (estoqueDisponivel < quantidade) {
       const err = new Error(`Estoque insuficiente para ${produto.nome}.`);
       err.status = 409;
@@ -56,7 +60,7 @@ async function montarPedidoSeguro(pedidoData) {
       nome: produto.nome,
       produto_variante_id,
       quantidade,
-      preco_unitario: Number(produto.preco),
+      preco_unitario: precoUnitario,
       cor,
       tamanho,
     };

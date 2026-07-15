@@ -105,13 +105,13 @@ async function buscarProdutosPorIds(ids) {
 async function buscarVariantesPorIds(ids) {
   const limpos = [...new Set((ids || []).map(id => Number(id)).filter(Number.isFinite))];
   if (!limpos.length) return [];
-  return sbFetch(`/produto_variantes?id=in.(${limpos.join(',')})&select=id,produto_id,cor,tamanho,estoque,ativo`);
+  return sbFetch(`/produto_variantes?id=in.(${limpos.join(',')})&select=id,produto_id,cor,tamanho,estoque,ativo,preco,preco_antigo,imagem_url,imagens,cor_hex,ordem`);
 }
 
 async function buscarVariantesPorProdutoIds(ids) {
   const limpos = [...new Set((ids || []).map(id => Number(id)).filter(Number.isFinite))];
   if (!limpos.length) return [];
-  return sbFetch(`/produto_variantes?produto_id=in.(${limpos.join(',')})&ativo=eq.true&select=id,produto_id,cor,tamanho,estoque,ativo`);
+  return sbFetch(`/produto_variantes?produto_id=in.(${limpos.join(',')})&ativo=eq.true&select=id,produto_id,cor,tamanho,estoque,ativo,preco,preco_antigo,imagem_url,imagens,cor_hex,ordem`);
 }
 
 // ── ESTOQUE ──────────────────────────────────────────────

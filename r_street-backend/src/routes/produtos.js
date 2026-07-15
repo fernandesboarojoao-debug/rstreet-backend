@@ -81,7 +81,7 @@ router.get('/:id/variantes', async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ erro: 'Produto inválido' });
 
-  const data = await sb(`/produto_variantes?produto_id=eq.${id}&select=*&order=cor.asc,tamanho.asc`);
+  const data = await sb(`/produto_variantes?produto_id=eq.${id}&select=*&order=ordem.asc,cor.asc,tamanho.asc`);
   res.json(data || []);
 });
 
@@ -113,6 +113,12 @@ router.put('/:id/variantes', async (req, res) => {
     const tamanho = String(item.tamanho || '').trim();
     const estoque = Math.max(0, parseInt(item.estoque, 10) || 0);
     const ativo = item.ativo !== false;
+    const preco = item.preco === null || item.preco === '' || item.preco === undefined ? null : Math.max(0, Number(item.preco) || 0);
+    const preco_antigo = item.preco_antigo === null || item.preco_antigo === '' || item.preco_antigo === undefined ? null : Math.max(0, Number(item.preco_antigo) || 0);
+    const imagem_url = String(item.imagem_url || '').trim() || null;
+    const imagens = Array.isArray(item.imagens) ? item.imagens.map(url => String(url || '').trim()).filter(Boolean) : [];
+    const cor_hex = String(item.cor_hex || '').trim() || null;
+    const ordem = parseInt(item.ordem, 10) || 0;
     if (!cor || !tamanho) continue;
 
     const chave = `${cor.toLowerCase()}|${tamanho.toUpperCase()}`;
@@ -122,7 +128,7 @@ router.put('/:id/variantes', async (req, res) => {
       throw err;
     }
     vistos.add(chave);
-    variantes.push({ produto_id: produtoId, cor, tamanho, estoque, ativo });
+    variantes.push({ produto_id: produtoId, cor, tamanho, estoque, ativo, preco, preco_antigo, imagem_url, imagens, cor_hex, ordem });
   }
 
   await sb(`/produto_variantes?produto_id=eq.${produtoId}`, { method: 'DELETE' });
