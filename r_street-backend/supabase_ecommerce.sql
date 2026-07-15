@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS produto_variantes (
   preco_antigo NUMERIC(10,2),
   imagem_url TEXT,
   imagens TEXT[] DEFAULT '{}',
+  videos TEXT[] DEFAULT '{}',
   cor_hex TEXT,
   ordem INTEGER DEFAULT 0,
   ativo BOOLEAN NOT NULL DEFAULT true,
@@ -131,6 +132,7 @@ ALTER TABLE produto_variantes
   ADD COLUMN IF NOT EXISTS preco_antigo NUMERIC(10,2),
   ADD COLUMN IF NOT EXISTS imagem_url TEXT,
   ADD COLUMN IF NOT EXISTS imagens TEXT[] DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS videos TEXT[] DEFAULT '{}',
   ADD COLUMN IF NOT EXISTS cor_hex TEXT,
   ADD COLUMN IF NOT EXISTS ordem INTEGER DEFAULT 0;
 

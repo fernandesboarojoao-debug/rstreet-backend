@@ -54,6 +54,24 @@ function parseDataUrl(dataUrl) {
   return { mime: match[1], buffer };
 }
 
+function parseMediaDataUrl(dataUrl) {
+  const match = /^data:((?:image\/(?:jpeg|png|webp))|(?:video\/(?:mp4|webm|quicktime)));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl || '');
+  if (!match) {
+    const err = new Error('Arquivo invalido. Use JPG, PNG, WEBP, MP4, WEBM ou MOV.');
+    err.status = 400;
+    throw err;
+  }
+  const buffer = Buffer.from(match[2], 'base64');
+  const isVideo = match[1].startsWith('video/');
+  const maxSize = isVideo ? 30 * 1024 * 1024 : 5 * 1024 * 1024;
+  if (buffer.length > maxSize) {
+    const err = new Error(isVideo ? 'Video muito grande. Maximo de 30MB.' : 'Imagem muito grande. Maximo de 5MB.');
+    err.status = 400;
+    throw err;
+  }
+  return { mime: match[1], buffer };
+}
+
 async function uploadStorageObject(path, buffer, mime) {
   const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${IMAGE_BUCKET}/${path}`, {
     method: 'POST',
@@ -88,7 +106,7 @@ router.get('/:id/variantes', async (req, res) => {
 // POST /api/produtos/upload-image — salva foto no Supabase Storage
 router.post('/upload-image', async (req, res) => {
   const { dataUrl, name } = req.body || {};
-  const { mime, buffer } = parseDataUrl(dataUrl);
+  const { mime, buffer } = parseMediaDataUrl(dataUrl);
   const path = sanitizeFileName(name);
   const url = await uploadStorageObject(path, buffer, mime);
   res.json({ url, path });
@@ -117,6 +135,7 @@ router.put('/:id/variantes', async (req, res) => {
     const preco_antigo = item.preco_antigo === null || item.preco_antigo === '' || item.preco_antigo === undefined ? null : Math.max(0, Number(item.preco_antigo) || 0);
     const imagem_url = String(item.imagem_url || '').trim() || null;
     const imagens = Array.isArray(item.imagens) ? item.imagens.map(url => String(url || '').trim()).filter(Boolean) : [];
+    const videos = Array.isArray(item.videos) ? item.videos.map(url => String(url || '').trim()).filter(Boolean) : [];
     const cor_hex = String(item.cor_hex || '').trim() || null;
     const ordem = parseInt(item.ordem, 10) || 0;
     if (!cor || !tamanho) continue;
@@ -128,7 +147,7 @@ router.put('/:id/variantes', async (req, res) => {
       throw err;
     }
     vistos.add(chave);
-    variantes.push({ produto_id: produtoId, cor, tamanho, estoque, ativo, preco, preco_antigo, imagem_url, imagens, cor_hex, ordem });
+    variantes.push({ produto_id: produtoId, cor, tamanho, estoque, ativo, preco, preco_antigo, imagem_url, imagens, videos, cor_hex, ordem });
   }
 
   await sb(`/produto_variantes?produto_id=eq.${produtoId}`, { method: 'DELETE' });
