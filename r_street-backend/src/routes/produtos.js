@@ -54,22 +54,48 @@ function parseDataUrl(dataUrl) {
   return { mime: match[1], buffer };
 }
 
-function parseMediaDataUrl(dataUrl) {
-  const match = /^data:((?:image\/(?:jpeg|png|webp))|(?:video\/(?:mp4|webm|quicktime)));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl || '');
+function inferMediaMime(mime, name = '') {
+  const cleanMime = String(mime || '').toLowerCase();
+  if (cleanMime === 'image/jpeg' || cleanMime === 'image/jpg' || cleanMime === 'image/pjpeg') return 'image/jpeg';
+  if (cleanMime === 'image/png') return 'image/png';
+  if (cleanMime === 'image/webp') return 'image/webp';
+  if (cleanMime === 'video/mp4') return 'video/mp4';
+  if (cleanMime === 'video/webm') return 'video/webm';
+  if (cleanMime === 'video/quicktime' || cleanMime === 'video/mov') return 'video/quicktime';
+  const ext = String(name || '').split('.').pop()?.toLowerCase();
+  return {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    mp4: 'video/mp4',
+    webm: 'video/webm',
+    mov: 'video/quicktime'
+  }[ext] || '';
+}
+
+function parseMediaDataUrl(dataUrl, name = '') {
+  const match = /^data:([^;]*);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl || '');
+  const mime = inferMediaMime(match?.[1], name);
   if (!match) {
     const err = new Error('Arquivo invalido. Use JPG, PNG, WEBP, MP4, WEBM ou MOV.');
     err.status = 400;
     throw err;
   }
+  if (!mime) {
+    const err = new Error('Arquivo invalido. Use JPG, PNG, WEBP, MP4, WEBM ou MOV.');
+    err.status = 400;
+    throw err;
+  }
   const buffer = Buffer.from(match[2], 'base64');
-  const isVideo = match[1].startsWith('video/');
+  const isVideo = mime.startsWith('video/');
   const maxSize = isVideo ? 30 * 1024 * 1024 : 5 * 1024 * 1024;
   if (buffer.length > maxSize) {
     const err = new Error(isVideo ? 'Video muito grande. Maximo de 30MB.' : 'Imagem muito grande. Maximo de 5MB.');
     err.status = 400;
     throw err;
   }
-  return { mime: match[1], buffer };
+  return { mime, buffer };
 }
 
 async function uploadStorageObject(path, buffer, mime) {
@@ -106,7 +132,7 @@ router.get('/:id/variantes', async (req, res) => {
 // POST /api/produtos/upload-image — salva foto no Supabase Storage
 router.post('/upload-image', async (req, res) => {
   const { dataUrl, name } = req.body || {};
-  const { mime, buffer } = parseMediaDataUrl(dataUrl);
+  const { mime, buffer } = parseMediaDataUrl(dataUrl, name);
   const path = sanitizeFileName(name);
   const url = await uploadStorageObject(path, buffer, mime);
   res.json({ url, path });
