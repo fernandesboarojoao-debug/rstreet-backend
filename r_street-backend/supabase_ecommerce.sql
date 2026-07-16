@@ -101,6 +101,10 @@ CREATE POLICY "Public read active produtos"
   USING (ativo = true);
 
 -- Atualizacoes usadas pelo site atual
+ALTER TABLE produtos
+  ADD COLUMN IF NOT EXISTS especificacoes_tecnicas TEXT,
+  ADD COLUMN IF NOT EXISTS dicas_conservacao TEXT;
+
 ALTER TABLE pedidos
   ADD COLUMN IF NOT EXISTS envio_status TEXT,
   ADD COLUMN IF NOT EXISTS codigo_rastreio TEXT,
