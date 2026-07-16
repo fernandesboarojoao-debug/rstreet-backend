@@ -39,9 +39,9 @@ function sanitizeFileName(name = 'produto.jpg') {
 }
 
 function parseDataUrl(dataUrl) {
-  const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl || '');
+  const match = /^data:(image\/(?:jpeg|png|webp|avif));base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl || '');
   if (!match) {
-    const err = new Error('Imagem inválida. Use JPG, PNG ou WEBP.');
+    const err = new Error('Imagem inválida. Use JPG, PNG, WEBP ou AVIF.');
     err.status = 400;
     throw err;
   }
@@ -59,6 +59,7 @@ function inferMediaMime(mime, name = '') {
   if (cleanMime === 'image/jpeg' || cleanMime === 'image/jpg' || cleanMime === 'image/pjpeg') return 'image/jpeg';
   if (cleanMime === 'image/png') return 'image/png';
   if (cleanMime === 'image/webp') return 'image/webp';
+  if (cleanMime === 'image/avif') return 'image/avif';
   if (cleanMime === 'video/mp4') return 'video/mp4';
   if (cleanMime === 'video/webm') return 'video/webm';
   if (cleanMime === 'video/quicktime' || cleanMime === 'video/mov') return 'video/quicktime';
@@ -68,6 +69,7 @@ function inferMediaMime(mime, name = '') {
     jpeg: 'image/jpeg',
     png: 'image/png',
     webp: 'image/webp',
+    avif: 'image/avif',
     mp4: 'video/mp4',
     webm: 'video/webm',
     mov: 'video/quicktime'
@@ -78,12 +80,12 @@ function parseMediaDataUrl(dataUrl, name = '') {
   const match = /^data:([^;]*);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl || '');
   const mime = inferMediaMime(match?.[1], name);
   if (!match) {
-    const err = new Error('Arquivo invalido. Use JPG, PNG, WEBP, MP4, WEBM ou MOV.');
+    const err = new Error('Arquivo invalido. Use JPG, PNG, WEBP, AVIF, MP4, WEBM ou MOV.');
     err.status = 400;
     throw err;
   }
   if (!mime) {
-    const err = new Error('Arquivo invalido. Use JPG, PNG, WEBP, MP4, WEBM ou MOV.');
+    const err = new Error('Arquivo invalido. Use JPG, PNG, WEBP, AVIF, MP4, WEBM ou MOV.');
     err.status = 400;
     throw err;
   }
