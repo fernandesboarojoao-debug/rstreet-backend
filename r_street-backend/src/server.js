@@ -18,7 +18,6 @@ const allowedOrigins = new Set([
   process.env.FRONTEND_URL,
   'https://rstreet.com.br',
   'https://www.rstreet.com.br',
-  'https://rstreet-rho.vercel.app',
   'http://localhost:5500',
   'http://127.0.0.1:5500',
 ].filter(Boolean));
