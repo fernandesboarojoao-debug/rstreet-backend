@@ -25,6 +25,24 @@ async function sb(path, opts = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+function parseSbErrorMessage(message = '') {
+  try {
+    return JSON.parse(message);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeProductError(err) {
+  const supabaseError = parseSbErrorMessage(err.message);
+  if (supabaseError?.code === '23505' && String(supabaseError.message || '').includes('produtos_referencia_key')) {
+    const friendly = new Error('Essa referência já está cadastrada em outro produto. Use uma referência diferente ou edite o produto existente.');
+    friendly.status = 409;
+    return friendly;
+  }
+  return err;
+}
+
 function sanitizeFileName(name = 'produto.jpg') {
   const ext = (name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
   const base = name
@@ -140,8 +158,12 @@ router.post('/upload-image', async (req, res) => {
 
 // POST /api/produtos — cria novo
 router.post('/', async (req, res) => {
-  const data = await sb('/produtos', { method: 'POST', body: JSON.stringify(req.body) });
-  res.json(data);
+  try {
+    const data = await sb('/produtos', { method: 'POST', body: JSON.stringify(req.body) });
+    res.json(data);
+  } catch (err) {
+    throw normalizeProductError(err);
+  }
 });
 
 router.put('/:id/variantes', async (req, res) => {
@@ -188,8 +210,12 @@ router.put('/:id/variantes', async (req, res) => {
 
 // PATCH /api/produtos/:id — atualiza
 router.patch('/:id', async (req, res) => {
-  const data = await sb(`/produtos?id=eq.${req.params.id}`, { method: 'PATCH', body: JSON.stringify(req.body) });
-  res.json(data);
+  try {
+    const data = await sb(`/produtos?id=eq.${req.params.id}`, { method: 'PATCH', body: JSON.stringify(req.body) });
+    res.json(data);
+  } catch (err) {
+    throw normalizeProductError(err);
+  }
 });
 
 // DELETE /api/produtos/:id — deleta
