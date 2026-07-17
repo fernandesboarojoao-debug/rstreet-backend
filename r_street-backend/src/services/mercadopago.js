@@ -50,7 +50,7 @@ async function criarPreferencia(pedido, pedidoId) {
       },
       payment_methods: {
         excluded_payment_types: [],
-        installments: 12,
+        installments: 6,
       },
       back_urls: {
         success: `${FRONTEND_URL}/confirmacao.html?status=approved`,
