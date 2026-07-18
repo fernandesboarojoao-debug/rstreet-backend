@@ -50,4 +50,45 @@ router.patch('/pedidos/:id', async (req, res) => {
   res.json(data);
 });
 
+// GET /api/admin/home-destaques — lista cards editaveis da home
+router.get('/home-destaques', async (req, res) => {
+  const data = await sb('/home_destaques?select=*&order=id.asc');
+  res.json(data || []);
+});
+
+function cleanHomeHighlight(item, index) {
+  const id = Number(item?.id || index + 1);
+  if (!Number.isInteger(id) || id < 1 || id > 3) {
+    const err = new Error('Destaque invalido.');
+    err.status = 400;
+    throw err;
+  }
+
+  const midiaTipo = item?.midia_tipo === 'video' ? 'video' : 'image';
+  return {
+    id,
+    marca: String(item?.marca || '').trim().slice(0, 80),
+    titulo: String(item?.titulo || '').trim().slice(0, 120),
+    midia_url: String(item?.midia_url || '').trim(),
+    midia_tipo: midiaTipo,
+    link_url: String(item?.link_url || 'catalogo.html').trim().slice(0, 500) || 'catalogo.html',
+    ativo: item?.ativo !== false,
+    atualizado_em: new Date().toISOString(),
+  };
+}
+
+// PUT /api/admin/home-destaques — salva os 3 cards da home
+router.put('/home-destaques', async (req, res) => {
+  const entrada = Array.isArray(req.body?.destaques) ? req.body.destaques : [];
+  const destaques = entrada.slice(0, 3).map(cleanHomeHighlight);
+  if (destaques.length !== 3) return res.status(400).json({ erro: 'Envie os 3 destaques da home.' });
+
+  const data = await sb('/home_destaques?on_conflict=id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+    body: JSON.stringify(destaques),
+  });
+  res.json(data || []);
+});
+
 module.exports = router;
