@@ -71,6 +71,20 @@ async function atualizarPedido(pedidoId, dados) {
   });
 }
 
+async function marcarPedidoProcessandoPagamento(pedidoId, paymentId) {
+  const id = Number(pedidoId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const rows = await sbFetch(`/pedidos?id=eq.${id}&status=neq.pago&status=neq.processando_pagamento&status=neq.estoque_indisponivel`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      status: 'processando_pagamento',
+      mp_payment_id: String(paymentId),
+      atualizado_em: new Date().toISOString(),
+    }),
+  });
+  return rows?.[0] || null;
+}
+
 async function buscarPedido(pedidoId) {
   const rows = await sbFetch(`/pedidos?id=eq.${pedidoId}&select=*`);
   return rows?.[0] || null;
@@ -88,7 +102,7 @@ async function buscarPedidoPorIdEmail(pedidoId, email) {
 async function buscarItensPedido(pedidoId) {
   const id = Number(pedidoId);
   if (!Number.isInteger(id) || id <= 0) return [];
-  return sbFetch(`/itens_pedido?pedido_id=eq.${id}&select=nome_produto,quantidade,cor,tamanho`);
+  return sbFetch(`/itens_pedido?pedido_id=eq.${id}&select=produto_id,produto_variante_id,nome_produto,quantidade,preco_unitario,total,cor,tamanho`);
 }
 
 async function buscarPedidoPorMPId(mpPaymentId) {
@@ -174,6 +188,7 @@ module.exports = {
   criarPedido,
   criarItensPedido,
   atualizarPedido,
+  marcarPedidoProcessandoPagamento,
   buscarPedido,
   buscarPedidoPorIdEmail,
   buscarItensPedido,

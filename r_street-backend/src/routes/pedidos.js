@@ -2,6 +2,7 @@
 const express = require('express');
 const db = require('../services/db');
 const { requireAdmin } = require('../middleware/adminAuth');
+const { processarPagamentoMercadoPago } = require('../controllers/webhookController');
 const router = express.Router();
 
 router.post('/acompanhar', async (req, res) => {
@@ -16,6 +17,25 @@ router.post('/acompanhar', async (req, res) => {
 
   const itens = await db.buscarItensPedido(pedido.id);
   res.json({ pedido, itens });
+});
+
+router.post('/confirmacao', async (req, res) => {
+  const { pedido_id, payment_id } = req.body || {};
+  const pedidoId = Number(pedido_id);
+  const paymentId = String(payment_id || '').trim();
+
+  if (!Number.isInteger(pedidoId) || pedidoId <= 0 || !paymentId) {
+    return res.status(400).json({ erro: 'Informe pedido e pagamento para confirmar.' });
+  }
+
+  const resultado = await processarPagamentoMercadoPago(paymentId);
+  if (!resultado || Number(resultado.pedidoId) !== pedidoId) {
+    return res.status(404).json({ erro: 'Pagamento nao encontrado para este pedido.' });
+  }
+
+  const pedido = await db.buscarPedido(pedidoId);
+  const itens = await db.buscarItensPedido(pedidoId);
+  res.json({ pedido, itens, pagamento_status: resultado.pagamento.status });
 });
 
 router.use(requireAdmin);

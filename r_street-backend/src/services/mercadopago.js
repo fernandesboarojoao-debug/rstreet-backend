@@ -53,9 +53,9 @@ async function criarPreferencia(pedido, pedidoId) {
         installments: 6,
       },
       back_urls: {
-        success: `${FRONTEND_URL}/confirmacao.html?status=approved`,
-        failure: `${FRONTEND_URL}/confirmacao.html?status=failure`,
-        pending: `${FRONTEND_URL}/confirmacao.html?status=pending`,
+        success: `${FRONTEND_URL}/confirmacao.html?status=approved&pedido_id=${pedidoId}`,
+        failure: `${FRONTEND_URL}/confirmacao.html?status=failure&pedido_id=${pedidoId}`,
+        pending: `${FRONTEND_URL}/confirmacao.html?status=pending&pedido_id=${pedidoId}`,
       },
       auto_return:         'approved',
       external_reference:  String(pedidoId),
