@@ -65,12 +65,28 @@ function cleanHomeHighlight(item, index) {
   }
 
   const midiaTipo = item?.midia_tipo === 'video' ? 'video' : 'image';
+  const midias = (Array.isArray(item?.midias) ? item.midias : [])
+    .map(media => ({
+      url: String(media?.url || '').trim(),
+      tipo: media?.tipo === 'video' ? 'video' : 'image',
+    }))
+    .filter(media => media.url)
+    .slice(0, 8);
+  if (!midias.length && item?.midia_url) {
+    midias.push({
+      url: String(item.midia_url || '').trim(),
+      tipo: midiaTipo,
+    });
+  }
+  const principal = midias[0] || { url: String(item?.midia_url || '').trim(), tipo: midiaTipo };
+
   return {
     id,
     marca: String(item?.marca || '').trim().slice(0, 80),
     titulo: String(item?.titulo || '').trim().slice(0, 120),
-    midia_url: String(item?.midia_url || '').trim(),
-    midia_tipo: midiaTipo,
+    midia_url: principal.url,
+    midia_tipo: principal.tipo,
+    midias,
     link_url: String(item?.link_url || 'catalogo.html').trim().slice(0, 500) || 'catalogo.html',
     ativo: item?.ativo !== false,
     atualizado_em: new Date().toISOString(),
