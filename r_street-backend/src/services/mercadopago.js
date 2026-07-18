@@ -8,6 +8,39 @@ const client = new MercadoPagoConfig({
 const preferenceClient = new Preference(client);
 const paymentClient    = new Payment(client);
 
+function montarPaymentMethods(metodoPagamento) {
+  const metodo = String(metodoPagamento || 'credit_card');
+  const configPorMetodo = {
+    credit_card: {
+      excluded_payment_types: ['debit_card', 'ticket', 'bank_transfer', 'atm'],
+    },
+    debit_card: {
+      excluded_payment_types: ['credit_card', 'ticket', 'bank_transfer', 'atm'],
+    },
+    pix: {
+      default_payment_method_id: 'pix',
+      excluded_payment_types: ['credit_card', 'debit_card', 'ticket', 'atm'],
+    },
+    bolbradesco: {
+      default_payment_method_id: 'bolbradesco',
+      excluded_payment_types: ['credit_card', 'debit_card', 'bank_transfer', 'atm'],
+    },
+    account_money: {
+      default_payment_method_id: 'account_money',
+      excluded_payment_types: ['ticket', 'bank_transfer', 'atm'],
+      purpose: 'wallet_purchase',
+    },
+  };
+
+  const config = configPorMetodo[metodo] || configPorMetodo.credit_card;
+  return {
+    excluded_payment_types: config.excluded_payment_types.map(id => ({ id })),
+    installments: 6,
+    ...(config.default_payment_method_id && { default_payment_method_id: config.default_payment_method_id }),
+    ...(config.purpose && { purpose: config.purpose }),
+  };
+}
+
 // ── CRIAR PREFERÊNCIA DE PAGAMENTO ───────────────────────
 async function criarPreferencia(pedido, pedidoId) {
   const BACKEND_URL  = process.env.BACKEND_URL;
@@ -48,10 +81,7 @@ async function criarPreferencia(pedido, pedidoId) {
           street_number: pedido.endereco.numero,
         },
       },
-      payment_methods: {
-        excluded_payment_types: [],
-        installments: 6,
-      },
+      payment_methods: montarPaymentMethods(pedido.metodo_pagamento),
       back_urls: {
         success: `${FRONTEND_URL}/confirmacao.html?status=approved&pedido_id=${pedidoId}`,
         failure: `${FRONTEND_URL}/confirmacao.html?status=failure&pedido_id=${pedidoId}`,

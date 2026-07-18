@@ -3,6 +3,10 @@ const mp = require('../services/mercadopago');
 const { calcularFreteSeguro } = require('../services/frete');
 
 async function montarPedidoSeguro(pedidoData) {
+  const metodosPermitidos = new Set(['credit_card', 'debit_card', 'pix', 'bolbradesco', 'account_money']);
+  const metodoPagamento = metodosPermitidos.has(pedidoData.metodo_pagamento)
+    ? pedidoData.metodo_pagamento
+    : 'credit_card';
   const ids = pedidoData.itens.map(i => i.id);
   const varianteIds = pedidoData.itens.map(i => i.produto_variante_id).filter(Boolean);
   const produtos = await db.buscarProdutosPorIds(ids);
@@ -72,6 +76,7 @@ async function montarPedidoSeguro(pedidoData) {
 
   return {
     ...pedidoData,
+    metodo_pagamento: metodoPagamento,
     itens,
     frete,
     subtotal,
