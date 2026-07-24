@@ -103,7 +103,12 @@ CREATE POLICY "Public read active produtos"
 -- Atualizacoes usadas pelo site atual
 ALTER TABLE produtos
   ADD COLUMN IF NOT EXISTS especificacoes_tecnicas TEXT,
-  ADD COLUMN IF NOT EXISTS dicas_conservacao TEXT;
+  ADD COLUMN IF NOT EXISTS dicas_conservacao TEXT,
+  ADD COLUMN IF NOT EXISTS destaque_catalogo BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE INDEX IF NOT EXISTS idx_produtos_destaque_catalogo
+  ON produtos(destaque_catalogo)
+  WHERE destaque_catalogo = TRUE;
 
 ALTER TABLE pedidos
   ADD COLUMN IF NOT EXISTS envio_status TEXT,
