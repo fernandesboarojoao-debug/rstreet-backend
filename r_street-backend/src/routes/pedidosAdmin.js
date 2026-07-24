@@ -107,4 +107,102 @@ router.put('/home-destaques', async (req, res) => {
   res.json(data || []);
 });
 
+function slugifyTema(value) {
+  return String(value || 'campanha')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'campanha';
+}
+
+function cleanDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function cleanTemaSite(input = {}) {
+  const nome = String(input.nome || '').trim().slice(0, 120);
+  const titulo = String(input.titulo || '').trim().slice(0, 160);
+  if (!nome || !titulo) {
+    const err = new Error('Informe nome e titulo do tema.');
+    err.status = 400;
+    throw err;
+  }
+
+  const statusPermitidos = ['ativo', 'inativo', 'programado'];
+  const locaisPermitidos = ['home', 'catalogo', 'ambos'];
+  const produtoIds = Array.isArray(input.produto_ids) ? input.produto_ids : [];
+  const slug = slugifyTema(input.slug || nome);
+
+  return {
+    nome,
+    slug,
+    titulo,
+    texto: String(input.texto || '').trim().slice(0, 500) || null,
+    banner_url: String(input.banner_url || '').trim().slice(0, 1000) || null,
+    cor_destaque: /^#[0-9a-f]{6}$/i.test(String(input.cor_destaque || ''))
+      ? String(input.cor_destaque).trim()
+      : '#c8a96e',
+    botao_texto: String(input.botao_texto || 'Ver campanha').trim().slice(0, 80) || 'Ver campanha',
+    botao_link: String(input.botao_link || '').trim().slice(0, 500) || `catalogo.html?campanha=${slug}`,
+    local_exibicao: locaisPermitidos.includes(input.local_exibicao) ? input.local_exibicao : 'ambos',
+    status: statusPermitidos.includes(input.status) ? input.status : 'inativo',
+    inicio: cleanDate(input.inicio),
+    fim: cleanDate(input.fim),
+    produto_ids: [...new Set(produtoIds.map(Number).filter(id => Number.isInteger(id) && id > 0))].slice(0, 80),
+    atualizado_em: new Date().toISOString(),
+  };
+}
+
+async function ensureTemaSlug(payload, currentId = 0) {
+  const originalSlug = payload.slug;
+  const rows = await sb(`/temas_site?slug=eq.${encodeURIComponent(payload.slug)}&select=id`);
+  const conflict = (rows || []).find(row => Number(row.id) !== Number(currentId));
+  if (!conflict) return payload;
+  const slug = `${payload.slug}-${Date.now().toString(36).slice(-4)}`.slice(0, 90);
+  return {
+    ...payload,
+    slug,
+    botao_link: payload.botao_link === `catalogo.html?campanha=${originalSlug}` ? `catalogo.html?campanha=${slug}` : payload.botao_link,
+  };
+}
+
+// GET /api/admin/temas-site - lista campanhas/temas cadastrados
+router.get('/temas-site', async (req, res) => {
+  const data = await sb('/temas_site?select=*&order=criado_em.desc');
+  res.json(data || []);
+});
+
+// POST /api/admin/temas-site - cria ou atualiza campanha/tema
+router.post('/temas-site', async (req, res) => {
+  let payload = cleanTemaSite(req.body || {});
+  const id = Number(req.body?.id);
+  payload = await ensureTemaSlug(payload, Number.isInteger(id) ? id : 0);
+  if (Number.isInteger(id) && id > 0) {
+    const data = await sb(`/temas_site?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+    return res.json(Array.isArray(data) ? data[0] : data);
+  }
+
+  const data = await sb('/temas_site', {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, criado_em: new Date().toISOString() }),
+  });
+  res.json(Array.isArray(data) ? data[0] : data);
+});
+
+// DELETE /api/admin/temas-site/:id - remove uma campanha/tema
+router.delete('/temas-site/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ erro: 'Tema invalido.' });
+  await sb(`/temas_site?id=eq.${id}`, { method: 'DELETE' });
+  res.json({ ok: true });
+});
+
 module.exports = router;
