@@ -50,7 +50,7 @@ async function criarPreferencia(pedido, pedidoId) {
     id:          String(item.id),
     title:       [item.nome, item.cor, item.tamanho].filter(Boolean).join(' - '),
     quantity:    item.quantidade,
-    unit_price:  Number(item.preco_unitario),
+    unit_price:  Number(item.preco_pagamento ?? item.preco_unitario),
     currency_id: 'BRL',
   }));
 

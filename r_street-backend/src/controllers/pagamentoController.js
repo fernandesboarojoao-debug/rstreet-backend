@@ -2,6 +2,12 @@ const db = require('../services/db');
 const mp = require('../services/mercadopago');
 const { calcularFreteSeguro } = require('../services/frete');
 
+const PIX_DISCOUNT_RATE = 0.05;
+
+function arredondarMoeda(valor) {
+  return Math.round(Number(valor || 0) * 100) / 100;
+}
+
 async function montarPedidoSeguro(pedidoData) {
   const metodosPermitidos = new Set(['credit_card', 'debit_card', 'pix', 'bolbradesco', 'account_money']);
   const metodoPagamento = metodosPermitidos.has(pedidoData.metodo_pagamento)
@@ -71,15 +77,26 @@ async function montarPedidoSeguro(pedidoData) {
   });
 
   const frete = calcularFreteSeguro(pedidoData.frete, pedidoData.endereco);
-  const subtotal = itens.reduce((s, i) => s + i.preco_unitario * i.quantidade, 0);
-  const total = subtotal + frete.valor;
+  const subtotal = arredondarMoeda(itens.reduce((s, i) => s + i.preco_unitario * i.quantidade, 0));
+  const itensComPagamento = metodoPagamento === 'pix'
+    ? itens.map(item => ({
+        ...item,
+        preco_pagamento: arredondarMoeda(item.preco_unitario * (1 - PIX_DISCOUNT_RATE)),
+      }))
+    : itens.map(item => ({ ...item, preco_pagamento: arredondarMoeda(item.preco_unitario) }));
+  const descontoPix = metodoPagamento === 'pix'
+    ? arredondarMoeda(subtotal - itensComPagamento.reduce((s, i) => s + i.preco_pagamento * i.quantidade, 0))
+    : 0;
+  const totalProdutosPagamento = arredondarMoeda(itensComPagamento.reduce((s, i) => s + i.preco_pagamento * i.quantidade, 0));
+  const total = arredondarMoeda(totalProdutosPagamento + frete.valor);
 
   return {
     ...pedidoData,
     metodo_pagamento: metodoPagamento,
-    itens,
+    itens: itensComPagamento,
     frete,
     subtotal,
+    desconto_pix: descontoPix,
     total,
   };
 }
