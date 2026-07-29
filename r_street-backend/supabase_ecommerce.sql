@@ -166,3 +166,7 @@ CREATE POLICY "Produto variantes leitura publica ativas"
         AND p.ativo = true
     )
   );
+
+ALTER TABLE IF EXISTS temas_site
+  ADD COLUMN IF NOT EXISTS banner_desktop_url TEXT,
+  ADD COLUMN IF NOT EXISTS banner_mobile_url TEXT;

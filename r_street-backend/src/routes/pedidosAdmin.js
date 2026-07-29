@@ -143,7 +143,9 @@ function cleanTemaSite(input = {}) {
     slug,
     titulo,
     texto: String(input.texto || '').trim().slice(0, 500) || null,
-    banner_url: String(input.banner_url || '').trim().slice(0, 1000) || null,
+    banner_url: String(input.banner_url || input.banner_desktop_url || input.banner_mobile_url || '').trim().slice(0, 1000) || null,
+    banner_desktop_url: String(input.banner_desktop_url || input.banner_url || '').trim().slice(0, 1000) || null,
+    banner_mobile_url: String(input.banner_mobile_url || input.banner_url || '').trim().slice(0, 1000) || null,
     cor_destaque: /^#[0-9a-f]{6}$/i.test(String(input.cor_destaque || ''))
       ? String(input.cor_destaque).trim()
       : '#c8a96e',
