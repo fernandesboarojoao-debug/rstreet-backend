@@ -35,7 +35,6 @@ function montarPaymentMethods(metodoPagamento) {
   const config = configPorMetodo[metodo] || configPorMetodo.credit_card;
   return {
     excluded_payment_types: config.excluded_payment_types.map(id => ({ id })),
-    installments: 6,
     ...(config.default_payment_method_id && { default_payment_method_id: config.default_payment_method_id }),
     ...(config.purpose && { purpose: config.purpose }),
   };
