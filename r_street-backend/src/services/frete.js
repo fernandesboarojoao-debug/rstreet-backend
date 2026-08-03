@@ -1,5 +1,5 @@
 const FRETE_REGRAS = {
-  local: { tipo: 'Entrega local', valor: 8.00 },
+  local: { tipo: 'Entrega local', valor: 0 },
   sp: { tipo: 'Entrega SP', valor: 18.00 },
   regional: { tipo: 'Entrega regional', valor: 28.00 },
   nacional: { tipo: 'Entrega nacional', valor: 38.00 },
