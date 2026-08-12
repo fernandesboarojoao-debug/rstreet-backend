@@ -59,6 +59,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use('/api/auth/login', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 8, keyPrefix: 'login' }));
 app.use('/api/pagamento/criar', simpleRateLimit({ windowMs: 60 * 1000, max: 12, keyPrefix: 'pagamento' }));
 app.use('/api/pedidos/acompanhar', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 20, keyPrefix: 'acompanhar' }));
+app.use('/api/pedidos/confirmacao', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 30, keyPrefix: 'confirmacao' }));
 
 // ── ROTAS ────────────────────────────────────────────────
 app.use('/api/pagamento', pagamentoRoutes);

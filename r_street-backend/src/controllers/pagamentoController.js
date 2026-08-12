@@ -8,13 +8,63 @@ function arredondarMoeda(valor) {
   return Math.round(Number(valor || 0) * 100) / 100;
 }
 
-async function montarPedidoSeguro(pedidoData) {
+function erroPedido(message, status = 400) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+function agruparItensRecebidos(itensRecebidos) {
+  if (!Array.isArray(itensRecebidos) || !itensRecebidos.length) {
+    throw erroPedido('Carrinho vazio.');
+  }
+  if (itensRecebidos.length > 100) {
+    throw erroPedido('Carrinho com itens demais.');
+  }
+
+  const agrupados = new Map();
+  for (const item of itensRecebidos) {
+    const produtoId = Number(item?.id);
+    const varianteId = item?.produto_variante_id == null || item.produto_variante_id === ''
+      ? null
+      : Number(item.produto_variante_id);
+    const quantidade = Number(item?.quantidade);
+
+    if (!Number.isInteger(produtoId) || produtoId <= 0) {
+      throw erroPedido('Produto inválido no carrinho.');
+    }
+    if (varianteId !== null && (!Number.isInteger(varianteId) || varianteId <= 0)) {
+      throw erroPedido('Variação inválida no carrinho.');
+    }
+    if (!Number.isInteger(quantidade) || quantidade <= 0 || quantidade > 999) {
+      throw erroPedido('Quantidade inválida no carrinho.');
+    }
+
+    const chave = `${produtoId}:${varianteId || 0}`;
+    const existente = agrupados.get(chave);
+    if (existente) {
+      existente.quantidade += quantidade;
+      if (existente.quantidade > 999) throw erroPedido('Quantidade inválida no carrinho.');
+    } else {
+      agrupados.set(chave, {
+        ...item,
+        id: produtoId,
+        produto_variante_id: varianteId,
+        quantidade,
+      });
+    }
+  }
+  return [...agrupados.values()];
+}
+
+async function montarPedidoSeguro(pedidoData = {}) {
   const metodosPermitidos = new Set(['credit_card', 'debit_card', 'pix', 'bolbradesco', 'account_money']);
   const metodoPagamento = metodosPermitidos.has(pedidoData.metodo_pagamento)
     ? pedidoData.metodo_pagamento
     : 'credit_card';
-  const ids = pedidoData.itens.map(i => i.id);
-  const varianteIds = pedidoData.itens.map(i => i.produto_variante_id).filter(Boolean);
+  const itensRecebidos = agruparItensRecebidos(pedidoData.itens);
+  const ids = itensRecebidos.map(i => i.id);
+  const varianteIds = itensRecebidos.map(i => i.produto_variante_id).filter(Boolean);
   const produtos = await db.buscarProdutosPorIds(ids);
   const variantes = await db.buscarVariantesPorIds(varianteIds);
   const variantesProdutos = await db.buscarVariantesPorProdutoIds(ids);
@@ -22,15 +72,13 @@ async function montarPedidoSeguro(pedidoData) {
   const variantePorId = new Map(variantes.map(v => [Number(v.id), v]));
   const produtosComVariantes = new Set(variantesProdutos.map(v => Number(v.produto_id)));
 
-  const itens = pedidoData.itens.map(item => {
+  const itens = itensRecebidos.map(item => {
     const produtoId = Number(item.id);
-    const quantidade = Math.max(1, parseInt(item.quantidade, 10) || 1);
+    const quantidade = item.quantidade;
     const produto = porId.get(produtoId);
 
     if (!produto || produto.ativo === false) {
-      const err = new Error('Produto indisponivel no catalogo.');
-      err.status = 400;
-      throw err;
+      throw erroPedido('Produto indisponível no catálogo.');
     }
     let estoqueDisponivel = Number(produto.estoque);
     let cor = item.cor || null;
@@ -38,17 +86,13 @@ async function montarPedidoSeguro(pedidoData) {
     let produto_variante_id = item.produto_variante_id ? Number(item.produto_variante_id) : null;
 
     if (produtosComVariantes.has(produtoId) && !produto_variante_id) {
-      const err = new Error('Escolha cor e tamanho antes de finalizar a compra.');
-      err.status = 400;
-      throw err;
+      throw erroPedido('Escolha cor e tamanho antes de finalizar a compra.');
     }
 
     if (produto_variante_id) {
       const variante = variantePorId.get(produto_variante_id);
       if (!variante || Number(variante.produto_id) !== produtoId || variante.ativo === false) {
-        const err = new Error('Variacao indisponivel no catalogo.');
-        err.status = 400;
-        throw err;
+        throw erroPedido('Variação indisponível no catálogo.');
       }
       estoqueDisponivel = Number(variante.estoque);
       cor = variante.cor || cor;
@@ -59,10 +103,14 @@ async function montarPedidoSeguro(pedidoData) {
       ? Number(variantePorId.get(produto_variante_id).preco)
       : Number(produto.preco);
 
+    if (!Number.isFinite(estoqueDisponivel) || estoqueDisponivel < 0) {
+      throw erroPedido(`Não foi possível confirmar o estoque de ${produto.nome}.`, 503);
+    }
+    if (!Number.isFinite(precoUnitario) || precoUnitario <= 0) {
+      throw erroPedido(`Preço inválido para ${produto.nome}.`, 409);
+    }
     if (estoqueDisponivel < quantidade) {
-      const err = new Error(`Estoque insuficiente para ${produto.nome}.`);
-      err.status = 409;
-      throw err;
+      throw erroPedido(`Estoque insuficiente para ${produto.nome}.`, 409);
     }
 
     return {
@@ -102,10 +150,12 @@ async function montarPedidoSeguro(pedidoData) {
 }
 
 async function criarPagamento(req, res) {
-  const pedidoData = req.body;
+  const pedidoData = req.body || {};
+  const nome = String(pedidoData.cliente?.nome || '').trim();
+  const email = String(pedidoData.cliente?.email || '').trim();
 
-  if (!pedidoData.cliente?.nome || !pedidoData.cliente?.email) {
-    return res.status(400).json({ erro: 'Dados do cliente obrigatorios.' });
+  if (nome.length < 2 || nome.length > 120 || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ erro: 'Nome e e-mail válidos são obrigatórios.' });
   }
   if (!pedidoData.itens?.length) {
     return res.status(400).json({ erro: 'Carrinho vazio.' });

@@ -17,7 +17,12 @@ async function sbFetch(path, options = {}) {
     headers: { ...headers, ...(options.headers || {}) },
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`Supabase erro ${res.status}: ${text}`);
+  if (!res.ok) {
+    const err = new Error(`Supabase erro ${res.status}: ${text}`);
+    err.status = res.status;
+    err.responseBody = text;
+    throw err;
+  }
   return text ? JSON.parse(text) : null;
 }
 
@@ -184,6 +189,24 @@ async function reduzirEstoque(produtoId, quantidade, varianteId = null) {
   return rows[0];
 }
 
+async function finalizarPedidoPago(pedidoId, paymentId) {
+  const id = Number(pedidoId);
+  const pagamentoId = String(paymentId || '').trim();
+  if (!Number.isInteger(id) || id <= 0 || !pagamentoId) {
+    const err = new Error('Pedido ou pagamento inválido.');
+    err.status = 400;
+    throw err;
+  }
+
+  return sbFetch('/rpc/finalizar_pedido_pago', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_pedido_id: id,
+      p_payment_id: pagamentoId,
+    }),
+  });
+}
+
 module.exports = {
   criarPedido,
   criarItensPedido,
@@ -197,4 +220,5 @@ module.exports = {
   buscarVariantesPorIds,
   buscarVariantesPorProdutoIds,
   reduzirEstoque,
+  finalizarPedidoPago,
 };

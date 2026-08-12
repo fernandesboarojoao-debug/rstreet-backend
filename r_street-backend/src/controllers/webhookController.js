@@ -2,24 +2,24 @@ const db = require('../services/db');
 const mp = require('../services/mercadopago');
 
 async function receberWebhook(req, res) {
-  res.sendStatus(200);
-
   try {
     const body = JSON.parse(req.body.toString());
     const tipo = body.type || body.topic;
     const paymentId = body.data?.id || body.id;
 
-    if (tipo !== 'payment' || !paymentId) return;
+    if (tipo !== 'payment' || !paymentId) return res.sendStatus(200);
     await processarPagamentoMercadoPago(paymentId);
+    return res.sendStatus(200);
   } catch (err) {
     console.error('Erro no webhook:', err.message);
+    return res.sendStatus(500);
   }
 }
 
 async function processarPagamentoMercadoPago(paymentId) {
   const pagamento = await mp.buscarPagamento(paymentId);
-  const pedidoId = pagamento.external_reference;
-  if (!pedidoId) return null;
+  const pedidoId = Number(pagamento.external_reference);
+  if (!Number.isInteger(pedidoId) || pedidoId <= 0) return null;
 
   const pedidoAtual = await db.buscarPedido(pedidoId);
   if (!pedidoAtual) return null;
@@ -31,19 +31,32 @@ async function processarPagamentoMercadoPago(paymentId) {
     rejected: 'recusado',
     cancelled: 'cancelado',
     refunded: 'reembolsado',
+    charged_back: 'estornado',
   };
   const novoStatus = statusMap[pagamento.status] || pagamento.status;
+  const statusAtual = String(pedidoAtual.status || '').toLowerCase();
 
-  if (pagamento.status === 'approved' && pedidoAtual.status !== 'pago') {
-    const reservado = await db.marcarPedidoProcessandoPagamento(pedidoId, paymentId);
-    if (!reservado) return { pagamento, pedidoId, status: pedidoAtual.status };
+  // Um pedido ja reembolsado ou estornado nao pode voltar a pago por uma
+  // notificacao atrasada, pois o estoque dessa compra ja foi processado.
+  if (['reembolsado', 'estornado'].includes(statusAtual)) {
+    return { pagamento, pedidoId, status: statusAtual };
+  }
 
+  // Depois de confirmado, somente um reembolso ou estorno real pode retirar
+  // o status pago. Retornos pendentes, recusados ou cancelados sao ignorados.
+  const podeReverterPagamento = ['refunded', 'charged_back'].includes(pagamento.status);
+  if (statusAtual === 'pago' && pagamento.status !== 'approved' && !podeReverterPagamento) {
+    return { pagamento, pedidoId, status: 'pago' };
+  }
+
+  if (pagamento.status === 'approved') {
     try {
-      const itens = await buscarItensPedido(pedidoId);
-      for (const item of itens) {
-        await db.reduzirEstoque(item.produto_id, item.quantidade, item.produto_variante_id || null);
-      }
+      await db.finalizarPedidoPago(pedidoId, paymentId);
     } catch (estoqueErr) {
+      const detalhe = `${estoqueErr.message || ''} ${estoqueErr.responseBody || ''}`;
+      const estoqueIndisponivel = /estoque insuficiente|produto indisponível|produto indisponivel|variação indisponível|variacao indisponivel/i.test(detalhe);
+      if (!estoqueIndisponivel) throw estoqueErr;
+
       await db.atualizarPedido(pedidoId, {
         status: 'estoque_indisponivel',
         mp_payment_id: String(paymentId),
@@ -52,30 +65,16 @@ async function processarPagamentoMercadoPago(paymentId) {
       console.error('Pagamento aprovado com problema de estoque:', estoqueErr.message);
       return { pagamento, pedidoId, status: 'estoque_indisponivel' };
     }
+    return { pagamento, pedidoId, status: 'pago' };
   }
 
   await db.atualizarPedido(pedidoId, {
     status: novoStatus,
     mp_payment_id: String(paymentId),
-    pago_em: pagamento.status === 'approved' ? (pedidoAtual.pago_em || new Date().toISOString()) : null,
+    pago_em: podeReverterPagamento ? (pedidoAtual.pago_em || null) : null,
   });
 
   return { pagamento, pedidoId, status: novoStatus };
-}
-
-async function buscarItensPedido(pedidoId) {
-  const SUPABASE_URL = process.env.SUPABASE_URL;
-  const SUPABASE_KEY = process.env.SUPABASE_KEY;
-  const id = Number(pedidoId);
-  if (!Number.isInteger(id) || id <= 0) throw new Error('Pedido invalido no webhook.');
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/itens_pedido?pedido_id=eq.${id}&select=*`, {
-    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Falha ao buscar itens do pedido: ${res.status} ${text}`);
-  }
-  return res.json();
 }
 
 module.exports = { receberWebhook, processarPagamentoMercadoPago };

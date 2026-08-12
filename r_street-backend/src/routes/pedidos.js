@@ -24,7 +24,7 @@ router.post('/confirmacao', async (req, res) => {
   const pedidoId = Number(pedido_id);
   const paymentId = String(payment_id || '').trim();
 
-  if (!Number.isInteger(pedidoId) || pedidoId <= 0 || !paymentId) {
+  if (!Number.isInteger(pedidoId) || pedidoId <= 0 || !paymentId || paymentId.length > 100) {
     return res.status(400).json({ erro: 'Informe pedido e pagamento para confirmar.' });
   }
 
