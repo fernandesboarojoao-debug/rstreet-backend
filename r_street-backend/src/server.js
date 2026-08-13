@@ -41,6 +41,12 @@ function simpleRateLimit({ windowMs, max, keyPrefix }) {
   };
 }
 
+const reviewSubmissionRateLimit = simpleRateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 12,
+  keyPrefix: 'avaliacoes',
+});
+
 // ── CORS: permite seu frontend chamar o backend ──────────
 app.use(cors({
   origin(origin, callback) {
@@ -62,7 +68,12 @@ app.use('/api/auth/login', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 8, k
 app.use('/api/pagamento/criar', simpleRateLimit({ windowMs: 60 * 1000, max: 12, keyPrefix: 'pagamento' }));
 app.use('/api/pedidos/acompanhar', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 20, keyPrefix: 'acompanhar' }));
 app.use('/api/pedidos/confirmacao', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 30, keyPrefix: 'confirmacao' }));
-app.use('/api/engajamento/avaliacoes', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 12, keyPrefix: 'avaliacoes' }));
+app.use('/api/engajamento/avaliacoes', (req, res, next) => {
+  // A listagem e publica e acontece enquanto a pagina do produto atualiza.
+  // O limite protege apenas o envio de comentarios.
+  if (req.method !== 'POST') return next();
+  return reviewSubmissionRateLimit(req, res, next);
+});
 app.use('/api/engajamento/metricas', simpleRateLimit({ windowMs: 60 * 1000, max: 90, keyPrefix: 'metricas' }));
 app.use('/api/engajamento/vitrines', simpleRateLimit({ windowMs: 60 * 1000, max: 60, keyPrefix: 'vitrines' }));
 
