@@ -113,23 +113,27 @@ router.post('/metricas', async (req, res) => {
 router.get('/vitrines', async (req, res) => {
   const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
   const count = new Map();
+  let salesHistoryAvailable = false;
   try {
     const soldItems = await sb('/itens_pedido?select=produto_id,quantidade,pedidos!inner(status)&pedidos.status=eq.pago');
+    salesHistoryAvailable = true;
     (soldItems || []).forEach(item => {
       const id = Number(item.produto_id);
       const quantity = Math.max(1, Number(item.quantidade) || 1);
       if (Number.isInteger(id) && id > 0) count.set(id, (count.get(id) || 0) + quantity);
     });
   } catch (error) {
-    // As metricas continuam sendo uma fonte de apoio caso o relacionamento nao esteja disponivel.
+    // As metricas servem apenas como plano B se o historico de vendas nao estiver disponivel.
     console.warn('Nao foi possivel consultar itens vendidos:', error.message);
   }
 
-  const events = await sb(`/metricas_eventos?tipo=eq.purchase_item&criado_em=gte.${encodeURIComponent(since)}&produto_id=not.is.null&select=produto_id`);
-  (events || []).forEach(item => {
-    const id = Number(item.produto_id);
-    if (Number.isInteger(id) && id > 0) count.set(id, (count.get(id) || 0) + 1);
-  });
+  if (!salesHistoryAvailable) {
+    const events = await sb(`/metricas_eventos?tipo=eq.purchase_item&criado_em=gte.${encodeURIComponent(since)}&produto_id=not.is.null&select=produto_id`);
+    (events || []).forEach(item => {
+      const id = Number(item.produto_id);
+      if (Number.isInteger(id) && id > 0) count.set(id, (count.get(id) || 0) + 1);
+    });
+  }
   const maisVendidos = [...count.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
