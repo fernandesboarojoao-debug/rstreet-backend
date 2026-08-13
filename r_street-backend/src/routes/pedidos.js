@@ -16,7 +16,8 @@ router.post('/acompanhar', async (req, res) => {
   if (!pedido) return res.status(404).json({ erro: 'Pedido nao encontrado para este e-mail.' });
 
   const itens = await db.buscarItensPedido(pedido.id);
-  res.json({ pedido, itens });
+  const atualizacoes = await db.buscarAtualizacoesPedido(pedido.id);
+  res.json({ pedido, itens, atualizacoes: atualizacoes || [] });
 });
 
 router.post('/confirmacao', async (req, res) => {

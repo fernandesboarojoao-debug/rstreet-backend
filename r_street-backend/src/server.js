@@ -10,6 +10,7 @@ const webhookRoutes      = require('./routes/webhook');
 const authRoutes         = require('./routes/auth');
 const produtosRoutes     = require('./routes/produtos');
 const pedidosAdminRoutes = require('./routes/pedidosAdmin');
+const engajamentoRoutes  = require('./routes/engajamento');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -43,7 +44,8 @@ function simpleRateLimit({ windowMs, max, keyPrefix }) {
 // ── CORS: permite seu frontend chamar o backend ──────────
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+    const localDevOrigin = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin || '');
+    if (!origin || allowedOrigins.has(origin) || localDevOrigin) return callback(null, true);
     return callback(new Error('Origem nao permitida pelo CORS.'));
   },
   methods: ['GET','POST','PUT','PATCH','DELETE'],
@@ -60,6 +62,9 @@ app.use('/api/auth/login', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 8, k
 app.use('/api/pagamento/criar', simpleRateLimit({ windowMs: 60 * 1000, max: 12, keyPrefix: 'pagamento' }));
 app.use('/api/pedidos/acompanhar', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 20, keyPrefix: 'acompanhar' }));
 app.use('/api/pedidos/confirmacao', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 30, keyPrefix: 'confirmacao' }));
+app.use('/api/engajamento/avaliacoes', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 12, keyPrefix: 'avaliacoes' }));
+app.use('/api/engajamento/metricas', simpleRateLimit({ windowMs: 60 * 1000, max: 90, keyPrefix: 'metricas' }));
+app.use('/api/engajamento/vitrines', simpleRateLimit({ windowMs: 60 * 1000, max: 60, keyPrefix: 'vitrines' }));
 
 // ── ROTAS ────────────────────────────────────────────────
 app.use('/api/pagamento', pagamentoRoutes);
@@ -68,6 +73,7 @@ app.use('/api/webhook',   webhookRoutes);
 app.use('/api/auth',      authRoutes);
 app.use('/api/produtos',  produtosRoutes);
 app.use('/api/admin',     pedidosAdminRoutes);
+app.use('/api/engajamento', engajamentoRoutes);
 
 // ── HEALTH CHECK ─────────────────────────────────────────
 app.get('/', (req, res) => {

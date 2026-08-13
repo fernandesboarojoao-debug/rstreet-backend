@@ -50,6 +50,61 @@ router.patch('/pedidos/:id', async (req, res) => {
   res.json(data);
 });
 
+// GET /api/admin/avaliacoes — fila de moderação de avaliações
+router.get('/avaliacoes', async (req, res) => {
+  const data = await sb('/avaliacoes_produtos?select=*&order=criado_em.desc');
+  const reviews = data || [];
+  const ids = [...new Set(reviews.map(item => Number(item.produto_id)).filter(Number.isInteger))];
+  const products = ids.length ? await sb(`/produtos?id=in.(${ids.join(',')})&select=id,nome`) : [];
+  const names = new Map((products || []).map(item => [Number(item.id), item.nome]));
+  res.json(reviews.map(item => ({ ...item, produto_nome: names.get(Number(item.produto_id)) || `Produto #${item.produto_id}` })));
+});
+
+// PATCH /api/admin/avaliacoes/:id — aprova ou recusa avaliação
+router.patch('/avaliacoes/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const status = String(req.body?.status || '').trim();
+  if (!Number.isInteger(id) || id <= 0 || !['pendente', 'aprovada', 'recusada'].includes(status)) {
+    return res.status(400).json({ erro: 'Avaliação ou status inválido.' });
+  }
+  const data = await sb(`/avaliacoes_produtos?id=eq.${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, aprovado_em: status === 'aprovada' ? new Date().toISOString() : null }),
+  });
+  res.json(Array.isArray(data) ? data[0] : data);
+});
+
+// GET /api/admin/metricas — resumo anônimo das visitas e intenções de compra
+router.get('/metricas', async (req, res) => {
+  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const events = await sb(`/metricas_eventos?criado_em=gte.${encodeURIComponent(since)}&select=tipo,produto_id,marca,categoria,valor,criado_em&order=criado_em.desc&limit=8000`);
+  const rows = events || [];
+  const totals = { page_view: 0, view_item: 0, add_to_cart: 0, begin_checkout: 0, purchase: 0, whatsapp: 0 };
+  const productMap = new Map();
+
+  rows.forEach(event => {
+    if (Object.prototype.hasOwnProperty.call(totals, event.tipo)) totals[event.tipo] += 1;
+    if (!event.produto_id) return;
+    const key = Number(event.produto_id);
+    const item = productMap.get(key) || { produto_id: key, visualizacoes: 0, carrinhos: 0, checkouts: 0, compras: 0 };
+    if (event.tipo === 'view_item') item.visualizacoes += 1;
+    if (event.tipo === 'add_to_cart') item.carrinhos += 1;
+    if (event.tipo === 'begin_checkout_item') item.checkouts += 1;
+    if (event.tipo === 'purchase_item') item.compras += 1;
+    productMap.set(key, item);
+  });
+
+  const ids = [...productMap.keys()].slice(0, 100);
+  const products = ids.length ? await sb(`/produtos?id=in.(${ids.join(',')})&select=id,nome,marca`) : [];
+  const names = new Map((products || []).map(product => [Number(product.id), product]));
+  const topProducts = [...productMap.values()]
+    .map(item => ({ ...item, nome: names.get(item.produto_id)?.nome || `Produto #${item.produto_id}`, marca: names.get(item.produto_id)?.marca || '' }))
+    .sort((a, b) => (b.carrinhos + b.visualizacoes) - (a.carrinhos + a.visualizacoes))
+    .slice(0, 12);
+
+  res.json({ periodo_dias: 30, totais: totals, produtos: topProducts });
+});
+
 // GET /api/admin/home-destaques — lista cards editaveis da home
 router.get('/home-destaques', async (req, res) => {
   const data = await sb('/home_destaques?select=*&order=id.asc');

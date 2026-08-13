@@ -110,6 +110,25 @@ async function buscarItensPedido(pedidoId) {
   return sbFetch(`/itens_pedido?pedido_id=eq.${id}&select=produto_id,produto_variante_id,nome_produto,quantidade,preco_unitario,total,cor,tamanho`);
 }
 
+async function buscarAtualizacoesPedido(pedidoId) {
+  const id = Number(pedidoId);
+  if (!Number.isInteger(id) || id <= 0) return [];
+  return sbFetch(`/pedido_atualizacoes?pedido_id=eq.${id}&select=titulo,descricao,status,envio_status,criado_em&order=criado_em.asc`);
+}
+
+async function buscarAvaliacoesPublicadas(produtoId) {
+  const id = Number(produtoId);
+  if (!Number.isInteger(id) || id <= 0) return [];
+  return sbFetch(`/avaliacoes_produtos?produto_id=eq.${id}&status=eq.aprovada&select=id,nome_cliente,nota,comentario,criado_em&order=criado_em.desc&limit=30`);
+}
+
+async function criarAvaliacao(dados) {
+  return sbFetch('/avaliacoes_produtos', {
+    method: 'POST',
+    body: JSON.stringify(dados),
+  });
+}
+
 async function buscarPedidoPorMPId(mpPaymentId) {
   const rows = await sbFetch(`/pedidos?mp_payment_id=eq.${mpPaymentId}&select=*`);
   return rows?.[0] || null;
@@ -215,6 +234,9 @@ module.exports = {
   buscarPedido,
   buscarPedidoPorIdEmail,
   buscarItensPedido,
+  buscarAtualizacoesPedido,
+  buscarAvaliacoesPublicadas,
+  criarAvaliacao,
   buscarPedidoPorMPId,
   buscarProdutosPorIds,
   buscarVariantesPorIds,
