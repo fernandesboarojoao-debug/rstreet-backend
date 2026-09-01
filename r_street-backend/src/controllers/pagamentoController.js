@@ -11,7 +11,42 @@ function arredondarMoeda(valor) {
 function erroPedido(message, status = 400) {
   const err = new Error(message);
   err.status = status;
+  err.expose = true;
   return err;
+}
+
+function cleanText(value, maxLength) {
+  return String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function normalizeCustomerAndAddress(pedidoData) {
+  const cliente = {
+    nome: cleanText(pedidoData.cliente?.nome, 120),
+    email: cleanText(pedidoData.cliente?.email, 254).toLowerCase(),
+    telefone: cleanText(pedidoData.cliente?.telefone, 30),
+    cpf: cleanText(pedidoData.cliente?.cpf, 20) || null,
+  };
+  const endereco = {
+    cep: cleanText(pedidoData.endereco?.cep, 20),
+    rua: cleanText(pedidoData.endereco?.rua, 160),
+    numero: cleanText(pedidoData.endereco?.numero, 30),
+    complemento: cleanText(pedidoData.endereco?.complemento, 120) || null,
+    bairro: cleanText(pedidoData.endereco?.bairro, 100),
+    cidade: cleanText(pedidoData.endereco?.cidade, 100),
+    estado: cleanText(pedidoData.endereco?.estado, 2).toUpperCase(),
+  };
+
+  if (cliente.nome.length < 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cliente.email)) {
+    throw erroPedido('Nome e e-mail válidos são obrigatórios.');
+  }
+  if (!endereco.cidade || !/^[A-Z]{2}$/.test(endereco.estado)) {
+    throw erroPedido('Cidade e estado válidos são obrigatórios.');
+  }
+  return { cliente, endereco };
 }
 
 function agruparItensRecebidos(itensRecebidos) {
@@ -151,17 +186,12 @@ async function montarPedidoSeguro(pedidoData = {}) {
 
 async function criarPagamento(req, res) {
   const pedidoData = req.body || {};
-  const nome = String(pedidoData.cliente?.nome || '').trim();
-  const email = String(pedidoData.cliente?.email || '').trim();
-
-  if (nome.length < 2 || nome.length > 120 || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return res.status(400).json({ erro: 'Nome e e-mail válidos são obrigatórios.' });
-  }
   if (!pedidoData.itens?.length) {
     return res.status(400).json({ erro: 'Carrinho vazio.' });
   }
 
-  const pedidoSeguro = await montarPedidoSeguro(pedidoData);
+  const normalized = normalizeCustomerAndAddress(pedidoData);
+  const pedidoSeguro = await montarPedidoSeguro({ ...pedidoData, ...normalized });
 
   const pedido = await db.criarPedido(pedidoSeguro);
   console.log(`Pedido criado: #${pedido.id}`);

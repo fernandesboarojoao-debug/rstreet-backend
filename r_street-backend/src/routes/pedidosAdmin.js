@@ -8,6 +8,47 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
 router.use(requireAdmin);
 
+const STATUS_PEDIDO = new Set(['pendente', 'em_analise', 'pago', 'recusado', 'cancelado', 'reembolsado', 'estornado', 'estoque_indisponivel']);
+const STATUS_ENVIO = new Set(['aguardando_envio', 'em_preparacao', 'enviado', 'entregue', 'retirada_disponivel', 'retirado']);
+
+function parsePositiveId(value) {
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function safeOptionalText(value, maxLength) {
+  const clean = String(value || '').trim();
+  if (clean.length > maxLength) return undefined;
+  return clean || null;
+}
+
+function safeOptionalHttpUrl(value) {
+  const clean = String(value || '').trim();
+  if (!clean) return null;
+  if (clean.length > 2048) return undefined;
+  try {
+    const url = new URL(clean);
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function cleanPublicUrl(value, fallback = null, maxLength = 1000) {
+  const clean = String(value || '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  if (!clean || clean.length > maxLength || clean.includes('\\')) return fallback;
+  if (clean.startsWith('//')) return `https:${clean}`;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(clean)) {
+    try {
+      const parsed = new URL(clean);
+      return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  return clean;
+}
+
 async function sb(path, opts = {}) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1${path}`, {
     ...opts,
@@ -32,21 +73,39 @@ router.get('/pedidos', async (req, res) => {
 
 // GET /api/admin/pedidos/:id/itens — itens de um pedido
 router.get('/pedidos/:id/itens', async (req, res) => {
-  const data = await sb(`/itens_pedido?pedido_id=eq.${req.params.id}&select=*`);
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ erro: 'Pedido invalido.' });
+  const data = await sb(`/itens_pedido?pedido_id=eq.${id}&select=*`);
   res.json(data);
 });
 
 // PATCH /api/admin/pedidos/:id — atualiza status
 router.patch('/pedidos/:id', async (req, res) => {
-  const permitidos = ['status', 'envio_status', 'codigo_rastreio', 'rastreio_url'];
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ erro: 'Pedido invalido.' });
   const payload = {};
-  for (const campo of permitidos) {
-    if (Object.prototype.hasOwnProperty.call(req.body || {}, campo)) payload[campo] = req.body[campo] || null;
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'status')) {
+    if (!STATUS_PEDIDO.has(req.body.status)) return res.status(400).json({ erro: 'Status do pedido invalido.' });
+    payload.status = req.body.status;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'envio_status')) {
+    if (!STATUS_ENVIO.has(req.body.envio_status)) return res.status(400).json({ erro: 'Status de envio invalido.' });
+    payload.envio_status = req.body.envio_status;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'codigo_rastreio')) {
+    const code = safeOptionalText(req.body.codigo_rastreio, 120);
+    if (code === undefined) return res.status(400).json({ erro: 'Codigo de rastreio muito longo.' });
+    payload.codigo_rastreio = code;
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'rastreio_url')) {
+    const url = safeOptionalHttpUrl(req.body.rastreio_url);
+    if (url === undefined) return res.status(400).json({ erro: 'Link de rastreio invalido.' });
+    payload.rastreio_url = url;
   }
   if (!Object.keys(payload).length) return res.status(400).json({ erro: 'Nenhum campo permitido para atualizar.' });
   payload.atualizado_em = new Date().toISOString();
 
-  const data = await sb(`/pedidos?id=eq.${req.params.id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  const data = await sb(`/pedidos?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
   res.json(data);
 });
 
@@ -116,24 +175,25 @@ function cleanHomeHighlight(item, index) {
   if (!Number.isInteger(id) || id < 1 || id > 3) {
     const err = new Error('Destaque invalido.');
     err.status = 400;
+    err.expose = true;
     throw err;
   }
 
   const midiaTipo = item?.midia_tipo === 'video' ? 'video' : 'image';
   const midias = (Array.isArray(item?.midias) ? item.midias : [])
     .map(media => ({
-      url: String(media?.url || '').trim(),
+      url: cleanPublicUrl(media?.url),
       tipo: media?.tipo === 'video' ? 'video' : 'image',
     }))
     .filter(media => media.url)
     .slice(0, 8);
   if (!midias.length && item?.midia_url) {
     midias.push({
-      url: String(item.midia_url || '').trim(),
+      url: cleanPublicUrl(item.midia_url),
       tipo: midiaTipo,
     });
   }
-  const principal = midias[0] || { url: String(item?.midia_url || '').trim(), tipo: midiaTipo };
+  const principal = midias[0] || { url: cleanPublicUrl(item?.midia_url), tipo: midiaTipo };
 
   return {
     id,
@@ -142,7 +202,7 @@ function cleanHomeHighlight(item, index) {
     midia_url: principal.url,
     midia_tipo: principal.tipo,
     midias,
-    link_url: String(item?.link_url || 'catalogo.html').trim().slice(0, 500) || 'catalogo.html',
+    link_url: cleanPublicUrl(item?.link_url, 'catalogo.html', 500),
     ativo: item?.ativo !== false,
     atualizado_em: new Date().toISOString(),
   };
@@ -185,6 +245,7 @@ function cleanTemaSite(input = {}) {
   if (!nome || !titulo) {
     const err = new Error('Informe nome e titulo do tema.');
     err.status = 400;
+    err.expose = true;
     throw err;
   }
 
@@ -198,14 +259,14 @@ function cleanTemaSite(input = {}) {
     slug,
     titulo,
     texto: String(input.texto || '').trim().slice(0, 500) || null,
-    banner_url: String(input.banner_url || input.banner_desktop_url || input.banner_mobile_url || '').trim().slice(0, 1000) || null,
-    banner_desktop_url: String(input.banner_desktop_url || input.banner_url || '').trim().slice(0, 1000) || null,
-    banner_mobile_url: String(input.banner_mobile_url || input.banner_url || '').trim().slice(0, 1000) || null,
+    banner_url: cleanPublicUrl(input.banner_url || input.banner_desktop_url || input.banner_mobile_url),
+    banner_desktop_url: cleanPublicUrl(input.banner_desktop_url || input.banner_url),
+    banner_mobile_url: cleanPublicUrl(input.banner_mobile_url || input.banner_url),
     cor_destaque: /^#[0-9a-f]{6}$/i.test(String(input.cor_destaque || ''))
       ? String(input.cor_destaque).trim()
       : '#c8a96e',
     botao_texto: String(input.botao_texto || 'Ver campanha').trim().slice(0, 80) || 'Ver campanha',
-    botao_link: String(input.botao_link || '').trim().slice(0, 500) || `catalogo.html?campanha=${slug}`,
+    botao_link: cleanPublicUrl(input.botao_link, `catalogo.html?campanha=${slug}`, 500),
     local_exibicao: locaisPermitidos.includes(input.local_exibicao) ? input.local_exibicao : 'ambos',
     status: statusPermitidos.includes(input.status) ? input.status : 'inativo',
     inicio: cleanDate(input.inicio),

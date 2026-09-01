@@ -1,9 +1,28 @@
 const crypto = require('crypto');
 
-const TOKEN_TTL_MS = 8 * 60 * 60 * 1000;
+const TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
+const MIN_SECRET_LENGTH = 32;
 
 function getSecret() {
-  return process.env.ADMIN_TOKEN_SECRET || process.env.SENHA_ADMIN;
+  const explicitSecret = String(process.env.ADMIN_TOKEN_SECRET || '');
+  if (explicitSecret.length >= MIN_SECRET_LENGTH) return explicitSecret;
+
+  const password = String(process.env.SENHA_ADMIN || '');
+  const databaseSecret = String(process.env.SUPABASE_KEY || '');
+  if (!password || !databaseSecret) return '';
+  return crypto
+    .createHash('sha256')
+    .update(`rstreet-admin-token:${password}:${databaseSecret}`)
+    .digest('hex');
+}
+
+function getAdminPassword() {
+  const password = String(process.env.SENHA_ADMIN || '');
+  return password.length ? password : '';
+}
+
+function isAdminAuthConfigured() {
+  return Boolean(getSecret() && getAdminPassword());
 }
 
 function sign(payload) {
@@ -13,20 +32,39 @@ function sign(payload) {
 }
 
 function createAdminToken() {
-  const exp = Date.now() + TOKEN_TTL_MS;
-  const payload = String(exp);
-  return `${payload}.${sign(payload)}`;
+  const issuedAt = Date.now();
+  const exp = issuedAt + TOKEN_TTL_MS;
+  const payload = Buffer.from(JSON.stringify({
+    v: 1,
+    iat: issuedAt,
+    exp,
+    nonce: crypto.randomBytes(16).toString('hex'),
+  })).toString('base64url');
+  return { token: `${payload}.${sign(payload)}`, expiresAt: exp };
 }
 
 function verifyAdminToken(token) {
   if (!token || typeof token !== 'string') return false;
-  const [payload, signature] = token.split('.');
-  if (!payload || !signature) return false;
-  const exp = Number(payload);
-  if (!Number.isFinite(exp) || Date.now() > exp) return false;
+  const parts = token.split('.');
+  if (parts.length !== 2) return false;
+  const [payload, signature] = parts;
+  if (!payload || !/^[a-f0-9]{64}$/i.test(signature)) return false;
+  let claims;
+  try {
+    claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+  } catch {
+    return false;
+  }
+  if (
+    claims?.v !== 1
+    || !Number.isFinite(claims?.iat)
+    || !Number.isFinite(claims?.exp)
+    || !/^[a-f0-9]{32}$/i.test(String(claims?.nonce || ''))
+  ) return false;
+  if (claims.iat > Date.now() + 60_000 || claims.exp <= Date.now() || claims.exp - claims.iat > TOKEN_TTL_MS) return false;
   const expected = sign(payload);
-  if (!expected || expected.length !== signature.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  if (!expected) return false;
+  return crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'));
 }
 
 function requireAdmin(req, res, next) {
@@ -38,4 +76,10 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-module.exports = { createAdminToken, requireAdmin, verifyAdminToken };
+module.exports = {
+  createAdminToken,
+  requireAdmin,
+  verifyAdminToken,
+  getAdminPassword,
+  isAdminAuthConfigured,
+};

@@ -38,9 +38,89 @@ function normalizeProductError(err) {
   if (supabaseError?.code === '23505' && String(supabaseError.message || '').includes('produtos_referencia_key')) {
     const friendly = new Error('Essa referência já está cadastrada em outro produto. Use uma referência diferente ou edite o produto existente.');
     friendly.status = 409;
+    friendly.expose = true;
     return friendly;
   }
   return err;
+}
+
+function cleanText(value, maxLength) {
+  const clean = String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean ? clean.slice(0, maxLength) : null;
+}
+
+function cleanLongText(value, maxLength) {
+  const clean = String(value ?? '').replace(/\u0000/g, '').trim();
+  return clean ? clean.slice(0, maxLength) : null;
+}
+
+function cleanHttpUrl(value) {
+  const clean = String(value ?? '').trim();
+  if (!clean) return null;
+  if (clean.length > 2048) return null;
+  try {
+    const url = new URL(clean);
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function cleanNumber(value, { nullable = false, integer = false, max = 1_000_000 } = {}) {
+  if (nullable && (value === null || value === '' || value === undefined)) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return nullable ? null : 0;
+  const safe = Math.min(max, Math.max(0, number));
+  return integer ? Math.trunc(safe) : Number(safe.toFixed(2));
+}
+
+function cleanStringList(value, maxItems, itemLength) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(item => cleanText(item, itemLength)).filter(Boolean))].slice(0, maxItems);
+}
+
+function cleanUrlList(value, maxItems) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(cleanHttpUrl).filter(Boolean))].slice(0, maxItems);
+}
+
+const PRODUCT_FIELDS = {
+  nome: value => cleanText(value, 180),
+  marca: value => cleanText(value, 80),
+  categoria: value => cleanText(value, 80),
+  preco: value => cleanNumber(value),
+  preco_antigo: value => cleanNumber(value, { nullable: true }),
+  estoque: value => cleanNumber(value, { integer: true }),
+  referencia: value => cleanText(value, 100),
+  imagem_url: cleanHttpUrl,
+  imagens: value => cleanUrlList(value, 20),
+  descricao: value => cleanLongText(value, 5000),
+  especificacoes_tecnicas: value => cleanLongText(value, 5000),
+  dicas_conservacao: value => cleanLongText(value, 5000),
+  tamanhos: value => cleanStringList(value, 40, 30),
+  destaque_catalogo: value => value === true,
+  ativo: value => value !== false,
+};
+
+function cleanProductPayload(input = {}, { partial = false } = {}) {
+  const payload = {};
+  for (const [field, cleaner] of Object.entries(PRODUCT_FIELDS)) {
+    if (!Object.prototype.hasOwnProperty.call(input, field)) continue;
+    payload[field] = cleaner(input[field]);
+  }
+  if (!partial && !payload.nome) {
+    const err = new Error('Informe o nome do produto.');
+    err.status = 400;
+    err.expose = true;
+    throw err;
+  }
+  if (!Object.keys(payload).length) {
+    const err = new Error('Nenhum campo permitido para salvar.');
+    err.status = 400;
+    err.expose = true;
+    throw err;
+  }
+  return payload;
 }
 
 function sanitizeFileName(name = 'produto.jpg') {
@@ -61,15 +141,27 @@ function parseDataUrl(dataUrl) {
   if (!match) {
     const err = new Error('Imagem inválida. Use JPG, PNG ou WEBP.');
     err.status = 400;
+    err.expose = true;
     throw err;
   }
   const buffer = Buffer.from(match[2], 'base64');
   if (buffer.length > 5 * 1024 * 1024) {
     const err = new Error('Imagem muito grande. Máximo de 5MB.');
     err.status = 400;
+    err.expose = true;
     throw err;
   }
   return { mime: match[1], buffer };
+}
+
+function hasExpectedMediaSignature(buffer, mime) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return false;
+  if (mime === 'image/jpeg') return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (mime === 'image/png') return buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (mime === 'image/webp') return buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP';
+  if (mime === 'video/webm') return buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+  if (mime === 'video/mp4' || mime === 'video/quicktime') return buffer.subarray(4, 8).toString('ascii') === 'ftyp';
+  return false;
 }
 
 function inferMediaMime(mime, name = '') {
@@ -98,11 +190,13 @@ function parseMediaDataUrl(dataUrl, name = '') {
   if (!match) {
     const err = new Error('Arquivo invalido. Use JPG, PNG, WEBP, MP4, WEBM ou MOV.');
     err.status = 400;
+    err.expose = true;
     throw err;
   }
   if (!mime) {
     const err = new Error('Arquivo invalido. Use JPG, PNG, WEBP, MP4, WEBM ou MOV.');
     err.status = 400;
+    err.expose = true;
     throw err;
   }
   const buffer = Buffer.from(match[2], 'base64');
@@ -111,6 +205,13 @@ function parseMediaDataUrl(dataUrl, name = '') {
   if (buffer.length > maxSize) {
     const err = new Error(isVideo ? 'Video muito grande. Maximo de 30MB.' : 'Imagem muito grande. Maximo de 5MB.');
     err.status = 400;
+    err.expose = true;
+    throw err;
+  }
+  if (!hasExpectedMediaSignature(buffer, mime)) {
+    const err = new Error('O conteudo do arquivo nao corresponde ao formato informado.');
+    err.status = 400;
+    err.expose = true;
     throw err;
   }
   return { mime, buffer };
@@ -159,7 +260,8 @@ router.post('/upload-image', async (req, res) => {
 // POST /api/produtos — cria novo
 router.post('/', async (req, res) => {
   try {
-    const data = await sb('/produtos', { method: 'POST', body: JSON.stringify(req.body) });
+    const payload = cleanProductPayload(req.body || {});
+    const data = await sb('/produtos', { method: 'POST', body: JSON.stringify(payload) });
     res.json(data);
   } catch (err) {
     throw normalizeProductError(err);
@@ -175,23 +277,24 @@ router.put('/:id/variantes', async (req, res) => {
   const variantes = [];
 
   for (const item of entrada) {
-    const cor = String(item.cor || '').trim();
-    const tamanho = String(item.tamanho || '').trim();
-    const estoque = Math.max(0, parseInt(item.estoque, 10) || 0);
+    const cor = cleanText(item.cor, 80) || '';
+    const tamanho = cleanText(item.tamanho, 30) || '';
+    const estoque = cleanNumber(item.estoque, { integer: true });
     const ativo = item.ativo !== false;
-    const preco = item.preco === null || item.preco === '' || item.preco === undefined ? null : Math.max(0, Number(item.preco) || 0);
-    const preco_antigo = item.preco_antigo === null || item.preco_antigo === '' || item.preco_antigo === undefined ? null : Math.max(0, Number(item.preco_antigo) || 0);
-    const imagem_url = String(item.imagem_url || '').trim() || null;
-    const imagens = Array.isArray(item.imagens) ? item.imagens.map(url => String(url || '').trim()).filter(Boolean) : [];
-    const videos = Array.isArray(item.videos) ? item.videos.map(url => String(url || '').trim()).filter(Boolean) : [];
-    const cor_hex = String(item.cor_hex || '').trim() || null;
-    const ordem = parseInt(item.ordem, 10) || 0;
+    const preco = cleanNumber(item.preco, { nullable: true });
+    const preco_antigo = cleanNumber(item.preco_antigo, { nullable: true });
+    const imagem_url = cleanHttpUrl(item.imagem_url);
+    const imagens = cleanUrlList(item.imagens, 20);
+    const videos = cleanUrlList(item.videos, 12);
+    const cor_hex = /^#[0-9a-f]{6}$/i.test(String(item.cor_hex || '').trim()) ? String(item.cor_hex).trim() : null;
+    const ordem = cleanNumber(item.ordem, { integer: true, max: 10_000 });
     if (!cor || !tamanho) continue;
 
     const chave = `${cor.toLowerCase()}|${tamanho.toUpperCase()}`;
     if (vistos.has(chave)) {
       const err = new Error(`Combinação duplicada: ${cor} / ${tamanho}`);
       err.status = 400;
+      err.expose = true;
       throw err;
     }
     vistos.add(chave);
@@ -210,8 +313,11 @@ router.put('/:id/variantes', async (req, res) => {
 
 // PATCH /api/produtos/:id — atualiza
 router.patch('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ erro: 'Produto inválido' });
   try {
-    const data = await sb(`/produtos?id=eq.${req.params.id}`, { method: 'PATCH', body: JSON.stringify(req.body) });
+    const payload = cleanProductPayload(req.body || {}, { partial: true });
+    const data = await sb(`/produtos?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
     res.json(data);
   } catch (err) {
     throw normalizeProductError(err);
@@ -220,7 +326,9 @@ router.patch('/:id', async (req, res) => {
 
 // DELETE /api/produtos/:id — deleta
 router.delete('/:id', async (req, res) => {
-  await sb(`/produtos?id=eq.${req.params.id}`, { method: 'DELETE' });
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ erro: 'Produto inválido' });
+  await sb(`/produtos?id=eq.${id}`, { method: 'DELETE' });
   res.json({ ok: true });
 });
 

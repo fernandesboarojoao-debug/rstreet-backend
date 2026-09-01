@@ -1,13 +1,33 @@
 const db = require('../services/db');
 const mp = require('../services/mercadopago');
+const { verifyMercadoPagoWebhookSignature } = require('../services/webhookSignature');
 
 async function receberWebhook(req, res) {
   try {
     const body = JSON.parse(req.body.toString());
     const tipo = body.type || body.topic;
-    const paymentId = body.data?.id || body.id;
+    const queryDataId = req.query?.['data.id'] || req.query?.data_id || '';
+    const bodyDataId = body.data?.id || body.id || '';
+    const signedDataId = String(queryDataId || bodyDataId).trim();
+    const paymentId = String(bodyDataId || queryDataId).trim();
 
-    if (tipo !== 'payment' || !paymentId) return res.sendStatus(200);
+    const webhookSecret = String(process.env.MP_WEBHOOK_SECRET || '');
+    if (webhookSecret) {
+      const signatureValid = verifyMercadoPagoWebhookSignature({
+        xSignature: req.headers['x-signature'],
+        xRequestId: req.headers['x-request-id'],
+        dataId: signedDataId,
+        secret: webhookSecret,
+      });
+      if (!signatureValid) return res.sendStatus(401);
+    } else {
+      // Compatibilidade com o deploy atual: nenhuma informacao do corpo e
+      // confiada. O status e a referencia sao consultados na API do MP.
+      console.warn('MP_WEBHOOK_SECRET ausente; validando o pagamento pela API do Mercado Pago.');
+    }
+    if (queryDataId && bodyDataId && String(queryDataId) !== String(bodyDataId)) return res.sendStatus(400);
+
+    if (tipo !== 'payment' || !/^\d{1,30}$/.test(paymentId)) return res.sendStatus(200);
     await processarPagamentoMercadoPago(paymentId);
     return res.sendStatus(200);
   } catch (err) {
@@ -77,4 +97,8 @@ async function processarPagamentoMercadoPago(paymentId) {
   return { pagamento, pedidoId, status: novoStatus };
 }
 
-module.exports = { receberWebhook, processarPagamentoMercadoPago };
+module.exports = {
+  receberWebhook,
+  processarPagamentoMercadoPago,
+  verifyMercadoPagoWebhookSignature,
+};

@@ -37,6 +37,7 @@ function calcularFreteSeguro(frete = {}, endereco = {}) {
   if (!selecionado) {
     const err = new Error('Opcao de frete invalida para o endereco informado.');
     err.status = 400;
+    err.expose = true;
     throw err;
   }
 
