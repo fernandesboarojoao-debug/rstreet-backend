@@ -1,6 +1,6 @@
 # Implantacao segura das correcoes de auditoria
 
-Estas alteracoes ainda nao foram publicadas. A reserva de estoque fica desligada por padrao ate que o fluxo real de teste do Mercado Pago seja concluido.
+As correcoes de frontend, backend e banco foram publicadas em 19/09/2026. As duas migracoes abaixo ja foram aplicadas no Supabase. A reserva de estoque continua desligada por padrao ate que o fluxo completo seja validado no sandbox do Mercado Pago.
 
 ## O que foi corrigido
 
@@ -13,18 +13,23 @@ Estas alteracoes ainda nao foram publicadas. A reserva de estoque fica desligada
 - Checkout novo limitado a cartao, debito e Pix. O Checkout Pro ainda pode mostrar saldo da conta Mercado Pago dentro do ambiente do proprio Mercado Pago; a API de Preferences nao permite excluir essa opcao.
 - Reserva transacional de estoque preparada para impedir duas compras da ultima unidade.
 
-## Ordem obrigatoria de implantacao
+## Estado atual da implantacao
 
-1. Criar um backup ou ponto de restauracao do banco.
-2. Aplicar `supabase/migrations/20260916191122_audit_integrity.sql`.
-3. Publicar o backend e o frontend com `STOCK_RESERVATIONS_ENABLED=false`.
-4. Validar no ambiente de teste: cartao aprovado, cartao recusado, Pix aprovado, Pix pendente, cancelamento, webhook repetido e ultima unidade concorrente.
-5. Aplicar `supabase/migrations/20260917185850_checkout_reservations.sql`.
-6. Repetir os testes com a reserva ainda desligada e conferir logs e estoque.
-7. Definir `STOCK_RESERVATIONS_ENABLED=true` no backend somente depois dos testes e publicar novamente.
-8. Acompanhar os primeiros pedidos e conferir `reserva_estado`, `reserva_expira_em`, status do pedido e estoque.
+1. `supabase/migrations/20260916191122_audit_integrity.sql`: aplicada.
+2. `supabase/migrations/20260917185850_checkout_reservations.sql`: aplicada.
+3. Backend e frontend: publicados com a reserva desativada por padrao.
+4. Testes automatizados, validacao sintatica e verificacoes de producao sem pagamento real: concluidos.
+5. Testes sandbox do Mercado Pago: pendentes.
+6. `STOCK_RESERVATIONS_ENABLED=true`: nao ativar antes dos testes sandbox.
 
-Nao publique um backend que chama os novos RPCs antes da primeira migracao. Nao volte a funcao antiga `finalizar_pedido_pago` depois de ativar reservas, pois ela descontaria novamente um estoque que ja foi reservado.
+Nao volte a funcao antiga `finalizar_pedido_pago` depois de ativar reservas, pois ela descontaria novamente um estoque que ja foi reservado.
+
+## Proxima etapa para ativar reservas
+
+1. Validar no sandbox: cartao aprovado, cartao recusado, Pix aprovado, Pix pendente, cancelamento, webhook repetido e ultima unidade concorrente.
+2. Repetir os testes com a reserva ainda desligada e conferir logs e estoque.
+3. Definir `STOCK_RESERVATIONS_ENABLED=true` no backend somente depois dos testes.
+4. Publicar novamente e acompanhar os primeiros pedidos, conferindo `reserva_estado`, `reserva_expira_em`, status e estoque.
 
 ## Comportamento da reserva
 
@@ -53,7 +58,6 @@ Nao publique um backend que chama os novos RPCs antes da primeira migracao. Nao 
 ## Pendencias que exigem ambiente externo
 
 - Executar pagamentos no sandbox do Mercado Pago e confirmar webhooks reais.
-- Aplicar as duas migracoes no Supabase apenas durante a implantacao autorizada.
 - Ligar a reserva somente depois desses testes.
 - Configurar IDs reais de Google Analytics e Meta Pixel quando estiverem disponiveis.
 - Otimizar imagens pesadas e completar metadados sociais por produto em uma etapa separada.
