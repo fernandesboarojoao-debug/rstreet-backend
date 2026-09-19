@@ -1,6 +1,8 @@
 const db = require('../services/db');
 const mp = require('../services/mercadopago');
+const crypto = require('crypto');
 const { calcularFreteSeguro } = require('../services/frete');
+const { validarEnderecoPorCep } = require('../services/cep');
 
 const PIX_DISCOUNT_RATE = 0.05;
 
@@ -43,10 +45,62 @@ function normalizeCustomerAndAddress(pedidoData) {
   if (cliente.nome.length < 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cliente.email)) {
     throw erroPedido('Nome e e-mail válidos são obrigatórios.');
   }
-  if (!endereco.cidade || !/^[A-Z]{2}$/.test(endereco.estado)) {
-    throw erroPedido('Cidade e estado válidos são obrigatórios.');
+  const telefoneDigitos = cliente.telefone.replace(/\D/g, '');
+  if (telefoneDigitos.length < 10 || telefoneDigitos.length > 11) {
+    throw erroPedido('Informe um telefone válido com DDD.');
+  }
+  if (endereco.cep.replace(/\D/g, '').length !== 8 || !endereco.rua || !endereco.numero
+    || !endereco.bairro || !endereco.cidade || !/^[A-Z]{2}$/.test(endereco.estado)) {
+    throw erroPedido('Preencha o endereço completo e informe um CEP válido.');
   }
   return { cliente, endereco };
+}
+
+function normalizeCheckoutToken(value) {
+  const token = String(value || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(token)) {
+    throw erroPedido('Atualize a pagina do checkout e tente novamente.');
+  }
+  return token;
+}
+
+function checkoutFingerprint(pedido) {
+  const itens = pedido.itens.map(item => ({
+    id: Number(item.id),
+    variante: Number(item.produto_variante_id) || null,
+    quantidade: Number(item.quantidade),
+    preco: Number(item.preco_pagamento ?? item.preco_unitario),
+  })).sort((a, b) => a.id - b.id || Number(a.variante || 0) - Number(b.variante || 0));
+  const canonical = JSON.stringify({
+    cliente: pedido.cliente,
+    endereco: pedido.endereco,
+    frete: pedido.frete,
+    metodo_pagamento: pedido.metodo_pagamento,
+    total: pedido.total,
+    itens,
+  });
+  return crypto.createHash('sha256').update(canonical).digest('hex');
+}
+
+function preferenceResponse(pedido) {
+  if (!pedido?.mp_init_point) return null;
+  return {
+    pedido_id: pedido.id,
+    init_point: pedido.mp_init_point,
+    sandbox_init_point: pedido.mp_sandbox_init_point || null,
+    reutilizado: true,
+  };
+}
+
+async function findReusableOrder(token, fingerprint) {
+  const existing = await db.buscarPedidoPorCheckoutToken(token);
+  if (!existing) return null;
+  if (existing.checkout_fingerprint !== fingerprint) {
+    throw erroPedido('O carrinho mudou. Atualize o checkout antes de tentar novamente.', 409);
+  }
+  const response = preferenceResponse(existing);
+  if (response) return response;
+  throw erroPedido('Seu pedido ainda está sendo preparado. Aguarde alguns segundos e tente novamente.', 409);
 }
 
 function agruparItensRecebidos(itensRecebidos) {
@@ -193,36 +247,69 @@ async function criarPagamento(req, res) {
     return res.status(400).json({ erro: 'Carrinho vazio.' });
   }
 
+  const checkoutToken = normalizeCheckoutToken(pedidoData.checkout_token);
   const normalized = normalizeCustomerAndAddress(pedidoData);
+  normalized.endereco = await validarEnderecoPorCep(normalized.endereco);
   const pedidoSeguro = await montarPedidoSeguro({ ...pedidoData, ...normalized });
+  pedidoSeguro.checkout_token = checkoutToken;
+  pedidoSeguro.checkout_fingerprint = checkoutFingerprint(pedidoSeguro);
 
-  const pedido = await db.criarPedido(pedidoSeguro);
+  const reused = await findReusableOrder(checkoutToken, pedidoSeguro.checkout_fingerprint);
+  if (reused) return res.json(reused);
+
+  let pedido;
+  try {
+    pedido = await db.criarPedido(pedidoSeguro);
+  } catch (err) {
+    const detail = `${err.message || ''} ${err.responseBody || ''}`;
+    if (/pedidos_checkout_token_unique|duplicate key|23505/i.test(detail)) {
+      const concurrent = await findReusableOrder(checkoutToken, pedidoSeguro.checkout_fingerprint);
+      if (concurrent) return res.json(concurrent);
+    }
+    throw err;
+  }
   console.log(`Pedido criado: #${pedido.id}`);
 
-  await db.criarItensPedido(pedido.id, pedidoSeguro.itens);
+  try {
+    await db.criarItensPedido(pedido.id, pedidoSeguro.itens);
 
-  if (process.env.STOCK_RESERVATIONS_ENABLED === 'true') {
-    try {
+    if (process.env.STOCK_RESERVATIONS_ENABLED === 'true') {
       const reservado = await db.reservarEstoquePedido(pedido.id);
       pedidoSeguro.reserva_expira_em = reservado.reserva_expira_em;
-    } catch (err) {
-      if (/estoque insuficiente|indisponivel|preco mudou|escolha uma variacao/i.test(err.message)) {
-        throw erroPedido('O estoque ou preco mudou. Revise o carrinho antes de continuar.', 409);
-      }
-      throw err;
     }
+
+    const preferencia = await mp.criarPreferencia(pedidoSeguro, pedido.id);
+    console.log(`Preferencia MP criada: ${preferencia.id}`);
+
+    await db.atualizarPedido(pedido.id, {
+      mp_preference_id: preferencia.id,
+      mp_init_point: preferencia.init_point,
+      mp_sandbox_init_point: preferencia.sandbox_init_point || null,
+    });
+
+    return res.json({
+      pedido_id: pedido.id,
+      init_point: preferencia.init_point,
+      sandbox_init_point: preferencia.sandbox_init_point,
+    });
+  } catch (err) {
+    try {
+      if (process.env.STOCK_RESERVATIONS_ENABLED === 'true') {
+        await db.liberarReservaPedido(pedido.id);
+      }
+      await db.atualizarPedido(pedido.id, {
+        status: 'cancelado',
+        checkout_token: null,
+        checkout_fingerprint: null,
+      });
+    } catch (cleanupErr) {
+      console.error(`Falha ao cancelar pedido incompleto #${pedido.id}:`, cleanupErr.message);
+    }
+    if (/estoque insuficiente|indisponivel|preco mudou|escolha uma variacao/i.test(err.message)) {
+      throw erroPedido('O estoque ou preco mudou. Revise o carrinho antes de continuar.', 409);
+    }
+    throw err;
   }
-
-  const preferencia = await mp.criarPreferencia(pedidoSeguro, pedido.id);
-  console.log(`Preferencia MP criada: ${preferencia.id}`);
-
-  await db.atualizarPedido(pedido.id, { mp_preference_id: preferencia.id });
-
-  res.json({
-    pedido_id: pedido.id,
-    init_point: preferencia.init_point,
-    sandbox_init_point: preferencia.sandbox_init_point,
-  });
 }
 
-module.exports = { criarPagamento, montarPedidoSeguro };
+module.exports = { criarPagamento, montarPedidoSeguro, normalizeCheckoutToken, checkoutFingerprint };

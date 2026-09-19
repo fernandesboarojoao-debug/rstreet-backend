@@ -48,6 +48,8 @@ async function criarPedido(dados) {
       subtotal:           dados.itens.reduce((s,i) => s + i.preco_unitario * i.quantidade, 0),
       total:              dados.total,
       metodo_pagamento:   dados.metodo_pagamento,
+      checkout_token:     dados.checkout_token || null,
+      checkout_fingerprint: dados.checkout_fingerprint || null,
       status:             'pendente',
     }),
   });
@@ -67,6 +69,13 @@ async function criarItensPedido(pedidoId, itens) {
     tamanho:        i.tamanho || null,
   }));
   return sbFetch('/itens_pedido', { method: 'POST', body: JSON.stringify(rows) });
+}
+
+async function buscarPedidoPorCheckoutToken(token) {
+  const clean = String(token || '').trim().toLowerCase();
+  if (!/^[0-9a-f-]{36}$/.test(clean)) return null;
+  const rows = await sbFetch(`/pedidos?checkout_token=eq.${encodeURIComponent(clean)}&select=*`);
+  return rows?.[0] || null;
 }
 
 async function atualizarPedido(pedidoId, dados, statusEsperado) {
@@ -253,6 +262,7 @@ module.exports = {
   liberarReservaPedido,
   buscarReservasVencidas,
   criarPedido,
+  buscarPedidoPorCheckoutToken,
   criarItensPedido,
   atualizarPedido,
   marcarPedidoProcessandoPagamento,

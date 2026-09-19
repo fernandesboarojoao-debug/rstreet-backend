@@ -16,7 +16,7 @@ Module._load = function load(request, parent, isMain) {
 
 const db = require('../src/services/db');
 const mp = require('../src/services/mercadopago');
-const { montarPedidoSeguro } = require('../src/controllers/pagamentoController');
+const { montarPedidoSeguro, normalizeCheckoutToken, checkoutFingerprint } = require('../src/controllers/pagamentoController');
 const { processarPagamentoMercadoPago } = require('../src/controllers/webhookController');
 Module._load = originalLoad;
 
@@ -35,6 +35,18 @@ function stubCatalog({ estoque = 5, preco = 100, variantes = [] } = {}) {
   db.buscarVariantesPorIds = async ids => variantes.filter(v => ids.map(Number).includes(Number(v.id)));
   db.buscarVariantesPorProdutoIds = async () => variantes;
 }
+
+test('checkout exige UUID v4 e gera fingerprint estavel', () => {
+  const token = normalizeCheckoutToken('123e4567-e89b-42d3-a456-426614174000');
+  assert.equal(token, '123e4567-e89b-42d3-a456-426614174000');
+  assert.throws(() => normalizeCheckoutToken('token-repetido'));
+  const pedido = {
+    ...pedidoBase([{ id: 1, quantidade: 1, preco_unitario: 100 }]),
+    total: 100,
+  };
+  assert.match(checkoutFingerprint(pedido), /^[0-9a-f]{64}$/);
+  assert.equal(checkoutFingerprint(pedido), checkoutFingerprint({ ...pedido, itens: [...pedido.itens] }));
+});
 
 test('novos pedidos aceitam somente cartoes e Pix e sempre excluem boleto', async () => {
   stubCatalog();
