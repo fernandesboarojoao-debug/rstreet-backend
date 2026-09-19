@@ -154,5 +154,6 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
+  require('./services/reservas').iniciarReconciliacaoReservas();
   console.log(`✅ R Street Backend rodando na porta ${PORT}`);
 });

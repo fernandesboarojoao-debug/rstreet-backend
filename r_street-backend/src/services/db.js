@@ -69,11 +69,25 @@ async function criarItensPedido(pedidoId, itens) {
   return sbFetch('/itens_pedido', { method: 'POST', body: JSON.stringify(rows) });
 }
 
-async function atualizarPedido(pedidoId, dados) {
-  return sbFetch(`/pedidos?id=eq.${pedidoId}`, {
+async function atualizarPedido(pedidoId, dados, statusEsperado) {
+  const guard = statusEsperado === undefined ? '' : `&status=eq.${encodeURIComponent(statusEsperado)}`;
+  return sbFetch(`/pedidos?id=eq.${pedidoId}${guard}`, {
     method: 'PATCH',
     body: JSON.stringify({ ...dados, atualizado_em: new Date().toISOString() }),
   });
+}
+
+async function reservarEstoquePedido(pedidoId) {
+  return sbFetch('/rpc/reservar_estoque_pedido', { method: 'POST', body: JSON.stringify({ p_pedido_id: pedidoId }) });
+}
+
+async function liberarReservaPedido(pedidoId) {
+  return sbFetch('/rpc/liberar_reserva_pedido', { method: 'POST', body: JSON.stringify({ p_pedido_id: pedidoId }) });
+}
+
+async function buscarReservasVencidas(afterId = 0) {
+  const limite = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  return sbFetch(`/pedidos?reserva_estado=eq.ativa&reserva_expira_em=lt.${encodeURIComponent(limite)}&id=gt.${Number(afterId) || 0}&select=id,mp_preference_id,reserva_expira_em&order=id.asc&limit=50`);
 }
 
 async function marcarPedidoProcessandoPagamento(pedidoId, paymentId) {
@@ -98,10 +112,12 @@ async function buscarPedido(pedidoId) {
 async function buscarPedidoPorIdEmail(pedidoId, email) {
   const id = Number(pedidoId);
   const emailLimpo = String(email || '').trim().toLowerCase();
-  if (!Number.isInteger(id) || id <= 0 || !emailLimpo) return null;
+  if (!Number.isInteger(id) || id <= 0 || emailLimpo.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailLimpo)) return null;
 
-  const rows = await sbFetch(`/pedidos?id=eq.${id}&cliente_email=ilike.${encodeURIComponent(emailLimpo)}&select=id,cliente_nome,cliente_email,status,envio_status,codigo_rastreio,rastreio_url,frete_tipo,total,criado_em,pago_em`);
-  return rows?.[0] || null;
+  // Compare literal addresses, including legacy mixed-case records, never SQL patterns.
+  const rows = await sbFetch(`/pedidos?id=eq.${id}&select=id,cliente_nome,cliente_email,status,envio_status,codigo_rastreio,rastreio_url,frete_tipo,total,criado_em,pago_em`);
+  const pedido = rows?.[0];
+  return pedido && String(pedido.cliente_email || '').trim().toLowerCase() === emailLimpo ? pedido : null;
 }
 
 async function buscarItensPedido(pedidoId) {
@@ -120,6 +136,12 @@ async function buscarAvaliacoesPublicadas(produtoId) {
   const id = Number(produtoId);
   if (!Number.isInteger(id) || id <= 0) return [];
   return sbFetch(`/avaliacoes_produtos?produto_id=eq.${id}&status=eq.aprovada&select=id,nome_cliente,nota,comentario,criado_em&order=criado_em.desc&limit=30`);
+}
+
+async function buscarPaginaAvaliacoes(produtoId, pagina) {
+  return sbFetch('/rpc/avaliacoes_paginadas', {
+    method: 'POST', body: JSON.stringify({ p_produto_id: produtoId, p_pagina: pagina }),
+  });
 }
 
 async function criarAvaliacao(dados) {
@@ -227,6 +249,9 @@ async function finalizarPedidoPago(pedidoId, paymentId) {
 }
 
 module.exports = {
+  reservarEstoquePedido,
+  liberarReservaPedido,
+  buscarReservasVencidas,
   criarPedido,
   criarItensPedido,
   atualizarPedido,
@@ -236,6 +261,7 @@ module.exports = {
   buscarItensPedido,
   buscarAtualizacoesPedido,
   buscarAvaliacoesPublicadas,
+  buscarPaginaAvaliacoes,
   criarAvaliacao,
   buscarPedidoPorMPId,
   buscarProdutosPorIds,

@@ -1,5 +1,5 @@
 // src/services/mercadopago.js
-const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
+const { MercadoPagoConfig, Preference, Payment, MerchantOrder } = require('mercadopago');
 
 const client = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN,
@@ -7,6 +7,7 @@ const client = new MercadoPagoConfig({
 
 const preferenceClient = new Preference(client);
 const paymentClient    = new Payment(client);
+const merchantOrderClient = new MerchantOrder(client);
 
 function montarPaymentMethods(metodoPagamento) {
   const metodo = String(metodoPagamento || 'credit_card');
@@ -21,18 +22,10 @@ function montarPaymentMethods(metodoPagamento) {
       default_payment_method_id: 'pix',
       excluded_payment_types: ['credit_card', 'debit_card', 'ticket', 'atm'],
     },
-    bolbradesco: {
-      default_payment_method_id: 'bolbradesco',
-      excluded_payment_types: ['credit_card', 'debit_card', 'bank_transfer', 'atm'],
-    },
-    account_money: {
-      default_payment_method_id: 'account_money',
-      excluded_payment_types: ['ticket', 'bank_transfer', 'atm'],
-      purpose: 'wallet_purchase',
-    },
   };
 
-  const config = configPorMetodo[metodo] || configPorMetodo.credit_card;
+  const config = configPorMetodo[metodo];
+  if (!config) throw new Error('Meio de pagamento indisponivel.');
   return {
     excluded_payment_types: config.excluded_payment_types.map(id => ({ id })),
     installments: 6,
@@ -82,6 +75,11 @@ async function criarPreferencia(pedido, pedidoId) {
         },
       },
       payment_methods: montarPaymentMethods(pedido.metodo_pagamento),
+      ...(pedido.reserva_expira_em && {
+        expires: true,
+        expiration_date_from: new Date().toISOString(),
+        expiration_date_to: pedido.reserva_expira_em,
+      }),
       back_urls: {
         success: `${FRONTEND_URL}/confirmacao.html?status=approved&pedido_id=${pedidoId}`,
         failure: `${FRONTEND_URL}/confirmacao.html?status=cancelled&pedido_id=${pedidoId}`,
@@ -102,4 +100,24 @@ async function buscarPagamento(paymentId) {
   return paymentClient.get({ id: paymentId });
 }
 
-module.exports = { criarPreferencia, buscarPagamento };
+async function buscarPedidoComercial(merchantOrderId) {
+  return merchantOrderClient.get({ merchantOrderId });
+}
+
+async function buscarPreferencia(preferenceId) {
+  return preferenceClient.get({ preferenceId });
+}
+
+async function buscarPagamentosPedido(pedidoId) {
+  const pagamentos = [];
+  for (let offset = 0; offset < 1000; offset += 100) {
+    const page = await paymentClient.search({ options: { external_reference: String(pedidoId), limit: 100, offset } });
+    if (!Array.isArray(page.results) || !Number.isInteger(page.paging?.total)) throw new Error('Consulta incompleta de pagamentos.');
+    pagamentos.push(...page.results);
+    if (pagamentos.length >= page.paging.total) return pagamentos;
+    if (!page.results.length) break;
+  }
+  throw new Error('Nao foi possivel verificar todas as tentativas de pagamento.');
+}
+
+module.exports = { criarPreferencia, buscarPagamento, buscarPedidoComercial, buscarPreferencia, buscarPagamentosPedido, montarPaymentMethods };

@@ -9,7 +9,7 @@ Module._load = function load(request, parent, isMain) {
       create() { throw new Error('Nao usado neste teste.'); }
       get() { throw new Error('Nao usado neste teste.'); }
     }
-    return { MercadoPagoConfig: Client, Preference: Client, Payment: Client };
+    return { MercadoPagoConfig: Client, Preference: Client, Payment: Client, MerchantOrder: Client };
   }
   return originalLoad.call(this, request, parent, isMain);
 };
@@ -36,6 +36,20 @@ function stubCatalog({ estoque = 5, preco = 100, variantes = [] } = {}) {
   db.buscarVariantesPorProdutoIds = async () => variantes;
 }
 
+test('novos pedidos aceitam somente cartoes e Pix e sempre excluem boleto', async () => {
+  stubCatalog();
+  for (const metodo_pagamento of ['bolbradesco','account_money','invalid']) {
+    await assert.rejects(montarPedidoSeguro({...pedidoBase([{id:1,quantidade:1}]),metodo_pagamento}),err=>err.status===400);
+    assert.throws(()=>mp.montarPaymentMethods(metodo_pagamento));
+  }
+  for (const metodo_pagamento of ['credit_card','debit_card','pix']) {
+    const pedido = await montarPedidoSeguro({...pedidoBase([{id:1,quantidade:1}]),metodo_pagamento});
+    assert.equal(pedido.metodo_pagamento,metodo_pagamento);
+    assert.ok(mp.montarPaymentMethods(metodo_pagamento).excluded_payment_types.some(p=>p.id==='ticket'));
+    assert.equal(mp.montarPaymentMethods(metodo_pagamento).installments,6);
+  }
+});
+
 test('consolida linhas repetidas antes de validar o estoque', async () => {
   stubCatalog({ estoque: 2 });
   const pedido = await montarPedidoSeguro(pedidoBase([
@@ -44,6 +58,17 @@ test('consolida linhas repetidas antes de validar o estoque', async () => {
   ]));
   assert.equal(pedido.itens.length, 1);
   assert.equal(pedido.itens[0].quantidade, 2);
+});
+
+test('rejeita total antigo e usa arredondamento Pix por unidade', async () => {
+  stubCatalog({preco:279.9});
+  const input={...pedidoBase([{id:1,quantidade:2}]),metodo_pagamento:'pix'};
+  const pedido=await montarPedidoSeguro(input);
+  const expectedUnit=Math.round(279.9*0.95*100)/100;
+  assert.equal(pedido.total,expectedUnit*2);
+  await assert.rejects(montarPedidoSeguro({...input,total:1}),err=>err.status===409);
+  await assert.rejects(montarPedidoSeguro({...input,total:'invalid'}),err=>err.status===409);
+  assert.equal((await montarPedidoSeguro({...input,total:pedido.total})).total,pedido.total);
 });
 
 test('rejeita o total consolidado quando ultrapassa o estoque', async () => {
@@ -72,8 +97,8 @@ test('usa preco e dados da variacao vindos do banco', async () => {
 });
 
 test('pagamento aprovado usa finalizacao atomica', async () => {
-  mp.buscarPagamento = async () => ({ status: 'approved', external_reference: '77' });
-  db.buscarPedido = async () => ({ id: 77, status: 'pendente' });
+  mp.buscarPagamento = async () => ({ status: 'approved', external_reference: '77', transaction_amount: 100, currency_id: 'BRL' });
+  db.buscarPedido = async () => ({ id: 77, status: 'pendente', total: 100 });
   let chamada = null;
   db.finalizarPedidoPago = async (pedidoId, paymentId) => { chamada = { pedidoId, paymentId }; };
   const resultado = await processarPagamentoMercadoPago('mp-123');
@@ -82,8 +107,8 @@ test('pagamento aprovado usa finalizacao atomica', async () => {
 });
 
 test('falha temporaria nao marca estoque como indisponivel', async () => {
-  mp.buscarPagamento = async () => ({ status: 'approved', external_reference: '78' });
-  db.buscarPedido = async () => ({ id: 78, status: 'pendente' });
+  mp.buscarPagamento = async () => ({ status: 'approved', external_reference: '78', transaction_amount: 100, currency_id: 'BRL' });
+  db.buscarPedido = async () => ({ id: 78, status: 'pendente', total: 100 });
   db.finalizarPedidoPago = async () => { throw new Error('Falha de rede'); };
   let atualizou = false;
   db.atualizarPedido = async () => { atualizou = true; };
@@ -139,4 +164,38 @@ test('ignora referencia externa que nao seja um id de pedido valido', async () =
   const resultado = await processarPagamentoMercadoPago('mp-125');
   assert.equal(resultado, null);
   assert.equal(buscouPedido, false);
+});
+
+test('rejeita valor, moeda e preferencia divergentes sem baixar estoque', async () => {
+  db.buscarPedido = async () => ({ id: 90, status: 'pendente', total: 300, mp_preference_id: 'pref-90' });
+  let finalizou = false;
+  db.finalizarPedidoPago = async () => { finalizou = true; };
+  const payment = { status: 'approved', external_reference: '90', transaction_amount: 300, currency_id: 'BRL', order: { id: 50 } };
+  for (const patch of [{ transaction_amount: 1 }, { transaction_amount: 300.01 }, { currency_id: 'USD' }, { order: null }]) {
+    mp.buscarPagamento = async () => ({ ...payment, ...patch });
+    await assert.rejects(processarPagamentoMercadoPago('900'));
+  }
+  mp.buscarPagamento = async () => payment;
+  for (const order of [
+    { preference_id: 'other', external_reference: '90', payments: [{ id: 900 }] },
+    { preference_id: 'pref-90', external_reference: '91', payments: [{ id: 900 }] },
+    { preference_id: 'pref-90', external_reference: '90', payments: [{ id: 901 }] },
+  ]) {
+    mp.buscarPedidoComercial = async () => order;
+    await assert.rejects(processarPagamentoMercadoPago('900'));
+  }
+  assert.equal(finalizou, false);
+  mp.buscarPedidoComercial = async () => ({ preference_id: 'pref-90', external_reference: '90', payments: [{ id: 900 }] });
+  await processarPagamentoMercadoPago('900');
+  assert.equal(finalizou, true);
+});
+
+test('reembolso de outra tentativa nao altera o pagamento aprovado', async () => {
+  db.buscarPedido = async () => ({ id: 91, status: 'pago', mp_payment_id: 'correct' });
+  mp.buscarPagamento = async () => ({ external_reference: '91', status: 'refunded' });
+  let changed = false;
+  db.atualizarPedido = async () => { changed = true; };
+  const result = await processarPagamentoMercadoPago('different');
+  assert.equal(result.status, 'pago');
+  assert.equal(changed, false);
 });

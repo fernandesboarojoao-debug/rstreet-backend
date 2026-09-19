@@ -35,6 +35,14 @@ async function sb(path, options = {}) {
 }
 
 router.get('/avaliacoes/produto/:produtoId', async (req, res) => {
+  if (req.query.pagina !== undefined) {
+    const id = Number(req.params.produtoId);
+    const pagina = Number(req.query.pagina);
+    if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(pagina) || pagina < 1 || pagina > 100000) {
+      return res.status(400).json({ erro: 'Produto ou página inválida.' });
+    }
+    return res.json(await db.buscarPaginaAvaliacoes(id, pagina));
+  }
   const reviews = await db.buscarAvaliacoesPublicadas(req.params.produtoId);
   res.json(reviews || []);
 });

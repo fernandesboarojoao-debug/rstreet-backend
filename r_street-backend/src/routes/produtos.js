@@ -35,6 +35,15 @@ function parseSbErrorMessage(message = '') {
 
 function normalizeProductError(err) {
   const supabaseError = parseSbErrorMessage(err.message);
+  if (supabaseError?.code === 'P0001') {
+    const message = String(supabaseError.message || '');
+    if (/Estoque mudou|Reabra|Variacao alterada|duplicada|reserva ativa/i.test(message)) {
+      const friendly = new Error(message);
+      friendly.status = 409;
+      friendly.expose = true;
+      return friendly;
+    }
+  }
   if (supabaseError?.code === '23505' && String(supabaseError.message || '').includes('produtos_referencia_key')) {
     const friendly = new Error('Essa referência já está cadastrada em outro produto. Use uma referência diferente ou edite o produto existente.');
     friendly.status = 409;
@@ -272,7 +281,10 @@ router.put('/:id/variantes', async (req, res) => {
   const produtoId = Number(req.params.id);
   if (!Number.isInteger(produtoId) || produtoId <= 0) return res.status(400).json({ erro: 'Produto inválido' });
 
-  const entrada = Array.isArray(req.body?.variantes) ? req.body.variantes : [];
+  if (!Array.isArray(req.body?.variantes) || req.body.variantes.length > 1000) {
+    return res.status(400).json({ erro: 'Envie uma lista válida de variações.' });
+  }
+  const entrada = req.body.variantes;
   const vistos = new Set();
   const variantes = [];
 
@@ -288,7 +300,7 @@ router.put('/:id/variantes', async (req, res) => {
     const videos = cleanUrlList(item.videos, 12);
     const cor_hex = /^#[0-9a-f]{6}$/i.test(String(item.cor_hex || '').trim()) ? String(item.cor_hex).trim() : null;
     const ordem = cleanNumber(item.ordem, { integer: true, max: 10_000 });
-    if (!cor || !tamanho) continue;
+    if (!cor || !tamanho) return res.status(400).json({ erro: 'Cor e tamanho são obrigatórios.' });
 
     const chave = `${cor.toLowerCase()}|${tamanho.toUpperCase()}`;
     if (vistos.has(chave)) {
@@ -298,17 +310,18 @@ router.put('/:id/variantes', async (req, res) => {
       throw err;
     }
     vistos.add(chave);
-    variantes.push({ produto_id: produtoId, cor, tamanho, estoque, ativo, preco, preco_antigo, imagem_url, imagens, videos, cor_hex, ordem });
+    const id = Number.isSafeInteger(Number(item.id)) && Number(item.id) > 0 ? Number(item.id) : null;
+    const estoque_original = item.estoque_original == null ? null : cleanNumber(item.estoque_original, { integer: true });
+    variantes.push({ id, estoque_original, produto_id: produtoId, cor, tamanho, estoque, ativo, preco, preco_antigo, imagem_url, imagens, videos, cor_hex, ordem });
   }
 
-  await sb(`/produto_variantes?produto_id=eq.${produtoId}`, { method: 'DELETE' });
-  if (!variantes.length) return res.json([]);
-
-  const data = await sb('/produto_variantes', {
-    method: 'POST',
-    body: JSON.stringify(variantes),
-  });
-  res.json(data || []);
+  try {
+    const data = await sb('/rpc/salvar_variantes_seguras', {
+      method: 'POST',
+      body: JSON.stringify({ p_produto_id: produtoId, p_variantes: variantes }),
+    });
+    res.json(data || []);
+  } catch (err) { throw normalizeProductError(err); }
 });
 
 // PATCH /api/produtos/:id — atualiza
@@ -317,7 +330,13 @@ router.patch('/:id', async (req, res) => {
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ erro: 'Produto inválido' });
   try {
     const payload = cleanProductPayload(req.body || {}, { partial: true });
-    const data = await sb(`/produtos?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+    if (Object.hasOwn(payload, 'estoque')) {
+      const variantes = await sb(`/produto_variantes?produto_id=eq.${id}&select=id&limit=1`);
+      if (variantes?.length) delete payload.estoque;
+    }
+    const data = Object.keys(payload).length
+      ? await sb(`/produtos?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(payload) })
+      : await sb(`/produtos?id=eq.${id}`);
     res.json(data);
   } catch (err) {
     throw normalizeProductError(err);
@@ -328,7 +347,8 @@ router.patch('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ erro: 'Produto inválido' });
-  await sb(`/produtos?id=eq.${id}`, { method: 'DELETE' });
+  try { await sb(`/produtos?id=eq.${id}`, { method: 'DELETE' }); }
+  catch (err) { throw normalizeProductError(err); }
   res.json({ ok: true });
 });
 

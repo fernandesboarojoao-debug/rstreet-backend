@@ -70,29 +70,51 @@ async function processarPagamentoMercadoPago(paymentId) {
   }
 
   if (pagamento.status === 'approved') {
+    const esperado = Number(pedidoAtual.total);
+    const recebido = Number(pagamento.transaction_amount);
+    if (!Number.isFinite(esperado) || esperado <= 0 || !Number.isFinite(recebido)
+      || Math.round(esperado * 100) !== Math.round(recebido * 100)
+      || pagamento.currency_id !== 'BRL') {
+      throw new Error('Pagamento divergente do valor ou moeda do pedido.');
+    }
+    if (pedidoAtual.mp_preference_id) {
+      const ordemId = pagamento.order?.id;
+      if (!ordemId) throw new Error('Pagamento sem vinculo verificavel com o checkout.');
+      const ordem = await mp.buscarPedidoComercial(ordemId);
+      if (String(ordem.preference_id) !== String(pedidoAtual.mp_preference_id)
+        || String(ordem.external_reference) !== String(pedidoId)
+        || !ordem.payments?.some(item => String(item.id) === String(paymentId))) {
+        throw new Error('Pagamento nao pertence ao checkout deste pedido.');
+      }
+    }
     try {
       await db.finalizarPedidoPago(pedidoId, paymentId);
     } catch (estoqueErr) {
       const detalhe = `${estoqueErr.message || ''} ${estoqueErr.responseBody || ''}`;
-      const estoqueIndisponivel = /estoque insuficiente|produto indisponível|produto indisponivel|variação indisponível|variacao indisponivel/i.test(detalhe);
+      const estoqueIndisponivel = /estoque insuficiente|produto indisponível|produto indisponivel|variação indisponível|variacao indisponivel|escolha uma variacao/i.test(detalhe);
       if (!estoqueIndisponivel) throw estoqueErr;
 
       await db.atualizarPedido(pedidoId, {
         status: 'estoque_indisponivel',
         mp_payment_id: String(paymentId),
         pago_em: new Date().toISOString(),
-      });
+      }, pedidoAtual.status);
       console.error('Pagamento aprovado com problema de estoque:', estoqueErr.message);
       return { pagamento, pedidoId, status: 'estoque_indisponivel' };
     }
     return { pagamento, pedidoId, status: 'pago' };
   }
 
+  if (podeReverterPagamento && pedidoAtual.mp_payment_id
+    && String(pedidoAtual.mp_payment_id) !== String(paymentId)) {
+    return { pagamento, pedidoId, status: statusAtual };
+  }
+
   await db.atualizarPedido(pedidoId, {
     status: novoStatus,
     mp_payment_id: String(paymentId),
     pago_em: podeReverterPagamento ? (pedidoAtual.pago_em || null) : null,
-  });
+  }, pedidoAtual.status);
 
   return { pagamento, pedidoId, status: novoStatus };
 }

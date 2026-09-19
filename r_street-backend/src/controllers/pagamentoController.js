@@ -93,10 +93,9 @@ function agruparItensRecebidos(itensRecebidos) {
 }
 
 async function montarPedidoSeguro(pedidoData = {}) {
-  const metodosPermitidos = new Set(['credit_card', 'debit_card', 'pix', 'bolbradesco', 'account_money']);
-  const metodoPagamento = metodosPermitidos.has(pedidoData.metodo_pagamento)
-    ? pedidoData.metodo_pagamento
-    : 'credit_card';
+  const metodosPermitidos = new Set(['credit_card', 'debit_card', 'pix']);
+  const metodoPagamento = pedidoData.metodo_pagamento || 'credit_card';
+  if (!metodosPermitidos.has(metodoPagamento)) throw erroPedido('Escolha cartao ou Pix para continuar.');
   const itensRecebidos = agruparItensRecebidos(pedidoData.itens);
   const ids = itensRecebidos.map(i => i.id);
   const varianteIds = itensRecebidos.map(i => i.produto_variante_id).filter(Boolean);
@@ -172,6 +171,10 @@ async function montarPedidoSeguro(pedidoData = {}) {
     : 0;
   const totalProdutosPagamento = arredondarMoeda(itensComPagamento.reduce((s, i) => s + i.preco_pagamento * i.quantidade, 0));
   const total = arredondarMoeda(totalProdutosPagamento + frete.valor);
+  if (pedidoData.total !== undefined && (!Number.isFinite(Number(pedidoData.total))
+    || Math.round(Number(pedidoData.total) * 100) !== Math.round(total * 100))) {
+    throw erroPedido('O valor da compra mudou. Revise o carrinho e o frete antes de continuar.', 409);
+  }
 
   return {
     ...pedidoData,
@@ -197,6 +200,18 @@ async function criarPagamento(req, res) {
   console.log(`Pedido criado: #${pedido.id}`);
 
   await db.criarItensPedido(pedido.id, pedidoSeguro.itens);
+
+  if (process.env.STOCK_RESERVATIONS_ENABLED === 'true') {
+    try {
+      const reservado = await db.reservarEstoquePedido(pedido.id);
+      pedidoSeguro.reserva_expira_em = reservado.reserva_expira_em;
+    } catch (err) {
+      if (/estoque insuficiente|indisponivel|preco mudou|escolha uma variacao/i.test(err.message)) {
+        throw erroPedido('O estoque ou preco mudou. Revise o carrinho antes de continuar.', 409);
+      }
+      throw err;
+    }
+  }
 
   const preferencia = await mp.criarPreferencia(pedidoSeguro, pedido.id);
   console.log(`Preferencia MP criada: ${preferencia.id}`);
