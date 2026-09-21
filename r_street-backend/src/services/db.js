@@ -257,6 +257,15 @@ async function finalizarPedidoPago(pedidoId, paymentId) {
   });
 }
 
+async function limparMetricasAntigas(meses = 13) {
+  const cutoff = new Date();
+  cutoff.setUTCMonth(cutoff.getUTCMonth() - Math.max(1, Number(meses) || 13));
+  return sbFetch(`/metricas_eventos?criado_em=lt.${encodeURIComponent(cutoff.toISOString())}`, {
+    method: 'DELETE',
+    headers: { Prefer: 'return=minimal' },
+  });
+}
+
 module.exports = {
   reservarEstoquePedido,
   liberarReservaPedido,
@@ -279,4 +288,5 @@ module.exports = {
   buscarVariantesPorProdutoIds,
   reduzirEstoque,
   finalizarPedidoPago,
+  limparMetricasAntigas,
 };

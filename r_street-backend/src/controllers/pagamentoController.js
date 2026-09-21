@@ -1,6 +1,7 @@
 const db = require('../services/db');
 const mp = require('../services/mercadopago');
 const crypto = require('crypto');
+const { reservasAtivadas } = require('../services/reservas');
 const { calcularFreteSeguro } = require('../services/frete');
 const { validarEnderecoPorCep } = require('../services/cep');
 
@@ -273,7 +274,7 @@ async function criarPagamento(req, res) {
   try {
     await db.criarItensPedido(pedido.id, pedidoSeguro.itens);
 
-    if (process.env.STOCK_RESERVATIONS_ENABLED === 'true') {
+    if (reservasAtivadas()) {
       const reservado = await db.reservarEstoquePedido(pedido.id);
       pedidoSeguro.reserva_expira_em = reservado.reserva_expira_em;
     }
@@ -294,7 +295,7 @@ async function criarPagamento(req, res) {
     });
   } catch (err) {
     try {
-      if (process.env.STOCK_RESERVATIONS_ENABLED === 'true') {
+      if (reservasAtivadas()) {
         await db.liberarReservaPedido(pedido.id);
       }
       await db.atualizarPedido(pedido.id, {

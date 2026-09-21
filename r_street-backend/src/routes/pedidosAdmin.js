@@ -2,6 +2,7 @@
 const express = require('express');
 const router  = express.Router();
 const { requireAdmin } = require('../middleware/adminAuth');
+const { notificarPedido } = require('../services/notificacoes');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -104,10 +105,11 @@ router.patch('/pedidos/:id', async (req, res) => {
   }
   if (!Object.keys(payload).length) return res.status(400).json({ erro: 'Nenhum campo permitido para atualizar.' });
 
+  const rows = await sb(`/pedidos?id=eq.${id}&select=id,status,envio_status,mp_preference_id,reserva_estado`);
+  const atual = rows?.[0];
+  if (!atual) return res.status(404).json({ erro: 'Pedido não encontrado.' });
+
   if (Object.prototype.hasOwnProperty.call(payload, 'status')) {
-    const rows = await sb(`/pedidos?id=eq.${id}&select=id,status,mp_preference_id,reserva_estado`);
-    const atual = rows?.[0];
-    if (!atual) return res.status(404).json({ erro: 'Pedido não encontrado.' });
     if (atual.reserva_estado === 'ativa' && payload.status !== atual.status) {
       return res.status(409).json({ erro: 'Este pedido tem estoque reservado. Aguarde a confirmação automática do pagamento.' });
     }
@@ -119,6 +121,14 @@ router.patch('/pedidos/:id', async (req, res) => {
   payload.atualizado_em = new Date().toISOString();
 
   const data = await sb(`/pedidos?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  const nextStatus = payload.status || atual.status;
+  const nextShipping = payload.envio_status || atual.envio_status;
+  if (nextStatus !== atual.status && ['pago', 'cancelado', 'reembolsado'].includes(nextStatus)) {
+    void notificarPedido(id, nextStatus === 'pago' ? 'pagamento_aprovado' : nextStatus);
+  }
+  if (nextShipping !== atual.envio_status && ['em_preparacao', 'enviado', 'retirada_disponivel', 'entregue', 'retirado'].includes(nextShipping)) {
+    void notificarPedido(id, nextShipping);
+  }
   res.json(data);
 });
 
@@ -149,22 +159,34 @@ router.patch('/avaliacoes/:id', async (req, res) => {
 // GET /api/admin/metricas — resumo anônimo das visitas e intenções de compra
 router.get('/metricas', async (req, res) => {
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const events = await sb(`/metricas_eventos?criado_em=gte.${encodeURIComponent(since)}&select=tipo,produto_id,marca,categoria,valor,criado_em&order=criado_em.desc&limit=8000`);
+  const [events, paidOrders, soldItems] = await Promise.all([
+    sb(`/metricas_eventos?criado_em=gte.${encodeURIComponent(since)}&select=tipo,produto_id,marca,categoria,valor,criado_em&order=criado_em.desc&limit=8000`),
+    sb(`/pedidos?status=eq.pago&pago_em=gte.${encodeURIComponent(since)}&select=id,total`),
+    sb(`/itens_pedido?select=produto_id,quantidade,pedidos!inner(status,pago_em)&pedidos.status=eq.pago&pedidos.pago_em=gte.${encodeURIComponent(since)}`),
+  ]);
   const rows = events || [];
   const totals = { page_view: 0, view_item: 0, add_to_cart: 0, begin_checkout: 0, purchase: 0, whatsapp: 0 };
   const productMap = new Map();
 
   rows.forEach(event => {
-    if (Object.prototype.hasOwnProperty.call(totals, event.tipo)) totals[event.tipo] += 1;
+    if (event.tipo !== 'purchase' && Object.prototype.hasOwnProperty.call(totals, event.tipo)) totals[event.tipo] += 1;
     if (!event.produto_id) return;
     const key = Number(event.produto_id);
     const item = productMap.get(key) || { produto_id: key, visualizacoes: 0, carrinhos: 0, checkouts: 0, compras: 0 };
     if (event.tipo === 'view_item') item.visualizacoes += 1;
     if (event.tipo === 'add_to_cart') item.carrinhos += 1;
     if (event.tipo === 'begin_checkout_item') item.checkouts += 1;
-    if (event.tipo === 'purchase_item') item.compras += 1;
     productMap.set(key, item);
   });
+
+  totals.purchase = (paidOrders || []).length;
+  for (const item of soldItems || []) {
+    const key = Number(item.produto_id);
+    if (!Number.isInteger(key)) continue;
+    const current = productMap.get(key) || { produto_id: key, visualizacoes: 0, carrinhos: 0, checkouts: 0, compras: 0 };
+    current.compras += Number(item.quantidade) || 0;
+    productMap.set(key, current);
+  }
 
   const ids = [...productMap.keys()].slice(0, 100);
   const products = ids.length ? await sb(`/produtos?id=in.(${ids.join(',')})&select=id,nome,marca`) : [];
@@ -174,7 +196,8 @@ router.get('/metricas', async (req, res) => {
     .sort((a, b) => (b.carrinhos + b.visualizacoes) - (a.carrinhos + a.visualizacoes))
     .slice(0, 12);
 
-  res.json({ periodo_dias: 30, totais: totals, produtos: topProducts });
+  const receita = (paidOrders || []).reduce((sum, order) => sum + (Number(order.total) || 0), 0);
+  res.json({ periodo_dias: 30, totais: totals, receita, produtos: topProducts });
 });
 
 // GET /api/admin/home-destaques — lista cards editaveis da home

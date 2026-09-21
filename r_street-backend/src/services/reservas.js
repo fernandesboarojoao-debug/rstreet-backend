@@ -2,6 +2,10 @@ const db = require('./db');
 const mp = require('./mercadopago');
 const { processarPagamentoMercadoPago } = require('../controllers/webhookController');
 
+function reservasAtivadas() {
+  return String(process.env.STOCK_RESERVATIONS_DISABLED || '').toLowerCase() !== 'true';
+}
+
 async function reconciliarReserva(pedido, now = Date.now()) {
   const limite = new Date(pedido.reserva_expira_em).getTime();
   if (!Number.isFinite(limite) || limite + 5 * 60 * 1000 > now) return 'aguardando';
@@ -25,7 +29,7 @@ async function reconciliarReserva(pedido, now = Date.now()) {
 }
 
 function iniciarReconciliacaoReservas() {
-  if (process.env.STOCK_RESERVATIONS_ENABLED !== 'true') return;
+  if (!reservasAtivadas()) return;
   let running = false;
   let cursor = 0;
   const run = async () => {
@@ -46,4 +50,4 @@ function iniciarReconciliacaoReservas() {
   void run();
 }
 
-module.exports = { reconciliarReserva, iniciarReconciliacaoReservas };
+module.exports = { reservasAtivadas, reconciliarReserva, iniciarReconciliacaoReservas };

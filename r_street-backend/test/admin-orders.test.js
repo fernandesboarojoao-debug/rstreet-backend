@@ -7,20 +7,25 @@ const vm = require('node:vm');
 function loadRoute(currentOrder) {
   const routes = new Map();
   const calls = [];
+  const notifications = [];
   const router = { use() {} };
   for (const method of ['get', 'post', 'put', 'patch', 'delete']) {
     router[method] = (url, handler) => routes.set(`${method} ${url}`, handler);
   }
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/routes/pedidosAdmin.js'), 'utf8'), {
     module: { exports: {} }, process: { env: {} }, URL, Date,
-    require: name => name === 'express' ? { Router: () => router } : { requireAdmin() {} },
+    require: name => {
+      if (name === 'express') return { Router: () => router };
+      if (name.includes('notificacoes')) return { notificarPedido: async (...args) => notifications.push(args) };
+      return { requireAdmin() {} };
+    },
     fetch: async (url, options = {}) => {
       calls.push({ url, ...options });
       const data = options.method === 'PATCH' ? [{ id: 1, ...JSON.parse(options.body) }] : (currentOrder ? [currentOrder] : []);
       return { ok: true, text: async () => JSON.stringify(data) };
     },
   });
-  return { route: routes.get('patch /pedidos/:id'), calls };
+  return { route: routes.get('patch /pedidos/:id'), calls, notifications };
 }
 
 function response() {
@@ -46,11 +51,12 @@ test('admin leaves Mercado Pago financial states to verified webhooks', async ()
 });
 
 test('admin can still update shipping and manual orders safely', async () => {
-  const linked = loadRoute({ id: 1, status: 'pago', mp_preference_id: 'pref', reserva_estado: 'consumida' });
+  const linked = loadRoute({ id: 1, status: 'pago', envio_status: 'aguardando_envio', mp_preference_id: 'pref', reserva_estado: 'consumida' });
   const shipping = response();
   await linked.route({ params: { id: '1' }, body: { envio_status: 'enviado', codigo_rastreio: 'BR123' } }, shipping);
   assert.equal(shipping.statusCode, 200);
   assert.equal(linked.calls.filter(call => call.method === 'PATCH').length, 1);
+  assert.deepEqual(linked.notifications, [[1, 'enviado']]);
 
   const manual = loadRoute({ id: 1, status: 'pendente', mp_preference_id: null, reserva_estado: null });
   const paid = response();

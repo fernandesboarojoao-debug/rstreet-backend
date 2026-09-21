@@ -155,5 +155,10 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   require('./services/reservas').iniciarReconciliacaoReservas();
+  const db = require('./services/db');
+  const cleanMetrics = () => db.limparMetricasAntigas().catch(err => console.error('Falha ao limpar métricas antigas:', err.message));
+  const cleanupTimer = setInterval(cleanMetrics, 24 * 60 * 60 * 1000);
+  cleanupTimer.unref();
+  void cleanMetrics();
   console.log(`✅ R Street Backend rodando na porta ${PORT}`);
 });

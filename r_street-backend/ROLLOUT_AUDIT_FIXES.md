@@ -1,6 +1,6 @@
 # Implantacao segura das correcoes de auditoria
 
-As correcoes de frontend, backend e banco foram publicadas em 19/09/2026. As duas migracoes abaixo ja foram aplicadas no Supabase. A reserva de estoque continua desligada por padrao ate que o fluxo completo seja validado no sandbox do Mercado Pago.
+As correcoes de frontend, backend e banco foram publicadas inicialmente em 19/09/2026. As migracoes abaixo ja foram aplicadas no Supabase. A reserva de estoque agora fica ativa por padrao para impedir duas vendas da ultima unidade.
 
 ## O que foi corrigido
 
@@ -17,19 +17,18 @@ As correcoes de frontend, backend e banco foram publicadas em 19/09/2026. As dua
 
 1. `supabase/migrations/20260916191122_audit_integrity.sql`: aplicada.
 2. `supabase/migrations/20260917185850_checkout_reservations.sql`: aplicada.
-3. Backend e frontend: publicados com a reserva desativada por padrao.
+3. Backend e frontend: reserva ativada por padrao.
 4. Testes automatizados, validacao sintatica e verificacoes de producao sem pagamento real: concluidos.
-5. Testes sandbox do Mercado Pago: pendentes.
-6. `STOCK_RESERVATIONS_ENABLED=true`: nao ativar antes dos testes sandbox.
+5. Testes automatizados de concorrencia, repeticao de webhook, liberacao e consumo de reserva: concluidos.
+6. `STOCK_RESERVATIONS_DISABLED=true`: usar apenas como reversao emergencial e temporaria.
 
 Nao volte a funcao antiga `finalizar_pedido_pago` depois de ativar reservas, pois ela descontaria novamente um estoque que ja foi reservado.
 
-## Proxima etapa para ativar reservas
+## Acompanhamento da reserva
 
-1. Validar no sandbox: cartao aprovado, cartao recusado, Pix aprovado, Pix pendente, cancelamento, webhook repetido e ultima unidade concorrente.
-2. Repetir os testes com a reserva ainda desligada e conferir logs e estoque.
-3. Definir `STOCK_RESERVATIONS_ENABLED=true` no backend somente depois dos testes.
-4. Publicar novamente e acompanhar os primeiros pedidos, conferindo `reserva_estado`, `reserva_expira_em`, status e estoque.
+1. Acompanhar os primeiros pedidos, conferindo `reserva_estado`, `reserva_expira_em`, status e estoque.
+2. Validar periodicamente no sandbox: cartao aprovado, cartao recusado, Pix aprovado, Pix pendente, cancelamento e webhook repetido.
+3. Em uma emergencia comprovada, definir `STOCK_RESERVATIONS_DISABLED=true`, publicar o backend e investigar antes de reativar.
 
 ## Comportamento da reserva
 
@@ -41,7 +40,7 @@ Nao volte a funcao antiga `finalizar_pedido_pago` depois de ativar reservas, poi
 - Um pagamento verdadeiro que aparecer depois da liberacao tenta alocar o estoque novamente. Se outra venda ja levou a ultima unidade, o pedido fica para tratamento manual em vez de gerar estoque negativo.
 - O reconciliador roda no processo do backend. Se o Render estiver suspenso, reservas vencidas so serao revistas quando o processo voltar a executar.
 
-## Verificacoes antes de ativar
+## Verificacoes operacionais
 
 - `SUPABASE_KEY` deve ser a chave secreta usada apenas no backend; nunca no frontend.
 - `MP_WEBHOOK_SECRET` deve estar configurado. Sem ele, o backend ainda consulta a API do Mercado Pago, mas a assinatura direta do webhook nao e validada.
@@ -50,14 +49,13 @@ Nao volte a funcao antiga `finalizar_pedido_pago` depois de ativar reservas, poi
 
 ## Testes locais executados
 
-- 27 testes de backend: checkout, webhooks, privacidade, seguranca, admin, banco, variacoes e reservas concorrentes.
-- 7 testes de frontend: carrinho, checkout, outra aba, gaveta, busca de categoria do Merchant e carregamento tardio do admin.
-- Validacao sintatica de 10 arquivos HTML e 9 scripts.
+- 34 testes de backend: checkout, webhooks, privacidade, seguranca, admin, banco, variacoes, notificacoes e reservas concorrentes.
+- 11 testes de frontend: carrinho, checkout, outra aba, gaveta, APIs publicas, Merchant e carregamento tardio do admin.
+- Validacao sintatica de 11 arquivos HTML e 9 scripts.
 - Conferencia visual do checkout em 390 x 844 e 1440 x 900, sem erros no console.
 
 ## Pendencias que exigem ambiente externo
 
 - Executar pagamentos no sandbox do Mercado Pago e confirmar webhooks reais.
-- Ligar a reserva somente depois desses testes.
 - Configurar IDs reais de Google Analytics e Meta Pixel quando estiverem disponiveis.
-- Otimizar imagens pesadas e completar metadados sociais por produto em uma etapa separada.
+- Configurar Resend e verificar o dominio de envio para ativar os avisos automaticos por e-mail.

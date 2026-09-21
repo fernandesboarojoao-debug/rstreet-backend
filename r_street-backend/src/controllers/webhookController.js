@@ -1,6 +1,7 @@
 const db = require('../services/db');
 const mp = require('../services/mercadopago');
 const { verifyMercadoPagoWebhookSignature } = require('../services/webhookSignature');
+const { notificarPedido } = require('../services/notificacoes');
 
 async function receberWebhook(req, res) {
   try {
@@ -102,6 +103,7 @@ async function processarPagamentoMercadoPago(paymentId) {
       console.error('Pagamento aprovado com problema de estoque:', estoqueErr.message);
       return { pagamento, pedidoId, status: 'estoque_indisponivel' };
     }
+    if (statusAtual !== 'pago') void notificarPedido(pedidoId, 'pagamento_aprovado');
     return { pagamento, pedidoId, status: 'pago' };
   }
 
@@ -115,6 +117,10 @@ async function processarPagamentoMercadoPago(paymentId) {
     mp_payment_id: String(paymentId),
     pago_em: podeReverterPagamento ? (pedidoAtual.pago_em || null) : null,
   }, pedidoAtual.status);
+
+  if (novoStatus !== statusAtual && ['cancelado', 'reembolsado'].includes(novoStatus)) {
+    void notificarPedido(pedidoId, novoStatus);
+  }
 
   return { pagamento, pedidoId, status: novoStatus };
 }
