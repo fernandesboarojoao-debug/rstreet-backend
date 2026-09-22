@@ -16,7 +16,7 @@ Module._load = function load(request, parent, isMain) {
 
 const db = require('../src/services/db');
 const mp = require('../src/services/mercadopago');
-const { montarPedidoSeguro, normalizeCheckoutToken, checkoutFingerprint } = require('../src/controllers/pagamentoController');
+const { montarPedidoSeguro, normalizeCheckoutToken, checkoutFingerprint, findReusableOrder } = require('../src/controllers/pagamentoController');
 const { processarPagamentoMercadoPago } = require('../src/controllers/webhookController');
 Module._load = originalLoad;
 
@@ -92,6 +92,33 @@ test('rejeita o total consolidado quando ultrapassa o estoque', async () => {
     ])),
     err => err.status === 409 && /Estoque insuficiente/.test(err.message)
   );
+});
+
+test('permite reconstruir um checkout existente quando sua reserva consumiu a ultima unidade', async () => {
+  stubCatalog({ estoque: 0 });
+  const input = pedidoBase([{ id: 1, quantidade: 1 }]);
+  await assert.rejects(montarPedidoSeguro(input), err => err.status === 409);
+  const pedido = await montarPedidoSeguro(input, { skipStockCheck: true });
+  assert.equal(pedido.total, 100);
+});
+
+test('reutiliza apenas checkout pendente com o mesmo carrinho', async () => {
+  const original = db.buscarPedidoPorCheckoutToken;
+  const fingerprint = 'fingerprint-original';
+  try {
+    db.buscarPedidoPorCheckoutToken = async () => ({
+      id: 42, status: 'pendente', checkout_fingerprint: fingerprint, mp_init_point: 'https://pagamento.example/42',
+    });
+    const reused = await findReusableOrder('token', fingerprint);
+    assert.equal(reused.pedido_id, 42);
+    await assert.rejects(findReusableOrder('token', 'carrinho-alterado'), err => err.status === 409);
+    db.buscarPedidoPorCheckoutToken = async () => ({
+      id: 42, status: 'pago', checkout_fingerprint: fingerprint, mp_init_point: 'https://pagamento.example/42',
+    });
+    await assert.rejects(findReusableOrder('token', fingerprint), err => err.status === 409);
+  } finally {
+    db.buscarPedidoPorCheckoutToken = original;
+  }
 });
 
 test('usa preco e dados da variacao vindos do banco', async () => {

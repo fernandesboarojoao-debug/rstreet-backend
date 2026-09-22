@@ -96,6 +96,9 @@ function preferenceResponse(pedido) {
 async function findReusableOrder(token, fingerprint) {
   const existing = await db.buscarPedidoPorCheckoutToken(token);
   if (!existing) return null;
+  if (existing.status !== 'pendente') {
+    throw erroPedido('Este pedido ja foi finalizado ou cancelado. Inicie um novo checkout.', 409);
+  }
   if (existing.checkout_fingerprint !== fingerprint) {
     throw erroPedido('O carrinho mudou. Atualize o checkout antes de tentar novamente.', 409);
   }
@@ -147,7 +150,7 @@ function agruparItensRecebidos(itensRecebidos) {
   return [...agrupados.values()];
 }
 
-async function montarPedidoSeguro(pedidoData = {}) {
+async function montarPedidoSeguro(pedidoData = {}, { skipStockCheck = false } = {}) {
   const metodosPermitidos = new Set(['credit_card', 'debit_card', 'pix']);
   const metodoPagamento = pedidoData.metodo_pagamento || 'credit_card';
   if (!metodosPermitidos.has(metodoPagamento)) throw erroPedido('Escolha cartao ou Pix para continuar.');
@@ -198,7 +201,7 @@ async function montarPedidoSeguro(pedidoData = {}) {
     if (!Number.isFinite(precoUnitario) || precoUnitario <= 0) {
       throw erroPedido(`Preço inválido para ${produto.nome}.`, 409);
     }
-    if (estoqueDisponivel < quantidade) {
+    if (!skipStockCheck && estoqueDisponivel < quantidade) {
       throw erroPedido(`Estoque insuficiente para ${produto.nome}.`, 409);
     }
 
@@ -251,7 +254,14 @@ async function criarPagamento(req, res) {
   const checkoutToken = normalizeCheckoutToken(pedidoData.checkout_token);
   const normalized = normalizeCustomerAndAddress(pedidoData);
   normalized.endereco = await validarEnderecoPorCep(normalized.endereco);
-  const pedidoSeguro = await montarPedidoSeguro({ ...pedidoData, ...normalized });
+  const existing = await db.buscarPedidoPorCheckoutToken(checkoutToken);
+  if (existing && existing.status !== 'pendente') {
+    throw erroPedido('Este pedido ja foi finalizado ou cancelado. Inicie um novo checkout.', 409);
+  }
+  const pedidoSeguro = await montarPedidoSeguro(
+    { ...pedidoData, ...normalized },
+    { skipStockCheck: Boolean(existing) }
+  );
   pedidoSeguro.checkout_token = checkoutToken;
   pedidoSeguro.checkout_fingerprint = checkoutFingerprint(pedidoSeguro);
 
@@ -313,4 +323,4 @@ async function criarPagamento(req, res) {
   }
 }
 
-module.exports = { criarPagamento, montarPedidoSeguro, normalizeCheckoutToken, checkoutFingerprint };
+module.exports = { criarPagamento, montarPedidoSeguro, normalizeCheckoutToken, checkoutFingerprint, findReusableOrder };
