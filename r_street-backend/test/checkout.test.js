@@ -16,7 +16,7 @@ Module._load = function load(request, parent, isMain) {
 
 const db = require('../src/services/db');
 const mp = require('../src/services/mercadopago');
-const { montarPedidoSeguro, normalizeCheckoutToken, checkoutFingerprint, findReusableOrder } = require('../src/controllers/pagamentoController');
+const { criarPagamento, montarPedidoSeguro, normalizeCheckoutToken, checkoutFingerprint, findReusableOrder, assertReusableOrder } = require('../src/controllers/pagamentoController');
 const { processarPagamentoMercadoPago } = require('../src/controllers/webhookController');
 Module._load = originalLoad;
 
@@ -133,6 +133,64 @@ test('usa preco e dados da variacao vindos do banco', async () => {
   assert.equal(pedido.itens[0].preco_unitario, 89.9);
   assert.equal(pedido.itens[0].cor, 'Preto');
   assert.equal(pedido.itens[0].tamanho, 'M');
+});
+
+test('rejected card can resume the same unexpired reservation without creating another order', async () => {
+  const original = db.buscarPedidoPorCheckoutToken;
+  try {
+    db.buscarPedidoPorCheckoutToken = async () => ({ id: 42, status: 'recusado', reserva_estado: 'ativa',
+      reserva_expira_em: new Date(Date.now() + 600000).toISOString(), checkout_fingerprint: 'same',
+      mp_init_point: 'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=test', total: 100 });
+    assert.equal((await findReusableOrder('token', 'same')).pedido_id, 42);
+    await assert.rejects(findReusableOrder('token', 'changed'), err => err.code === 'CHECKOUT_CHANGED'
+      && err.checkout.pedido_id === 42 && err.checkout.total === 100);
+  } finally { db.buscarPedidoPorCheckoutToken = original; }
+});
+
+test('expired, paid, released and in-review checkouts cannot silently create a second payment', () => {
+  for (const [patch, code] of [
+    [{ reserva_expira_em: new Date(0).toISOString() }, 'CHECKOUT_EXPIRED'],
+    [{ reserva_expira_em: 'invalid' }, 'CHECKOUT_EXPIRED'],
+    [{ status: 'pago' }, 'CHECKOUT_CLOSED'],
+    [{ reserva_estado: 'liberada' }, 'CHECKOUT_CLOSED'],
+    [{ status: 'em_analise' }, 'CHECKOUT_PROCESSING'],
+  ]) {
+    assert.throws(() => assertReusableOrder({ status: 'pendente', reserva_estado: 'ativa',
+      reserva_expira_em: new Date(Date.now() + 600000).toISOString(), ...patch }), err => err.code === code);
+  }
+});
+
+test('retry uses original prices and items, not a changed or sold-out catalog', async () => {
+  const originalFetch = global.fetch;
+  const originalLookup = db.buscarPedidoPorCheckoutToken;
+  const originalItems = db.buscarItensPedido;
+  const originalProducts = db.buscarProdutosPorIds;
+  const normalized = {
+    cliente: { nome: 'Cliente Teste', email: 'teste@example.com', telefone: '19999999999', cpf: null },
+    endereco: { cep: '13720-000', rua: 'Rua teste', numero: '1', complemento: null, bairro: 'Centro', cidade: 'Sao Jose do Rio Pardo', estado: 'SP' },
+    frete: { tipo: 'Entrega local', valor: 0 }, metodo_pagamento: 'credit_card', total: 100,
+    itens: [{ id: 1, produto_variante_id: null, quantidade: 1, preco_unitario: 100 }],
+    checkout_token: '123e4567-e89b-42d3-a456-426614174000',
+  };
+  try {
+    global.fetch = async () => ({ ok: true, json: async () => ({ localidade: 'Sao Jose do Rio Pardo', uf: 'SP' }) });
+    db.buscarPedidoPorCheckoutToken = async () => ({ id: 42, status: 'pendente', reserva_estado: 'ativa',
+      reserva_expira_em: new Date(Date.now() + 600000).toISOString(), checkout_fingerprint: checkoutFingerprint(normalized),
+      mp_init_point: 'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=test', total: 100 });
+    db.buscarItensPedido = async () => [{ produto_id: 1, produto_variante_id: null, quantidade: 1, preco_unitario: 100 }];
+    db.buscarProdutosPorIds = async () => { throw new Error('must not reprice an existing checkout'); };
+    let response;
+    await criarPagamento({ body: normalized }, { json: data => { response = data; } });
+    assert.equal(response.pedido_id, 42);
+    for (const body of [
+      { ...normalized, metodo_pagamento: 'pix', total: 95 },
+      { ...normalized, endereco: { ...normalized.endereco, numero: '2' } },
+      { ...normalized, itens: [{ id: 1, quantidade: 2 }], total: 200 },
+    ]) await assert.rejects(criarPagamento({ body }, { json() {} }), err => err.code === 'CHECKOUT_CHANGED');
+  } finally {
+    global.fetch = originalFetch; db.buscarPedidoPorCheckoutToken = originalLookup;
+    db.buscarItensPedido = originalItems; db.buscarProdutosPorIds = originalProducts;
+  }
 });
 
 test('pagamento aprovado usa finalizacao atomica', async () => {

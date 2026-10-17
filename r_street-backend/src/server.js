@@ -150,7 +150,10 @@ app.use((err, req, res, next) => {
     : status < 500
       ? 'Nao foi possivel concluir a solicitacao.'
       : 'Erro interno. Tente novamente em alguns instantes.';
-  res.status(status).json({ erro: publicMessage, referencia: req.requestId || undefined });
+  const checkoutCodes = new Set(['CHECKOUT_CHANGED', 'CHECKOUT_CLOSED', 'CHECKOUT_EXPIRED', 'CHECKOUT_PROCESSING', 'CHECKOUT_REVALIDATE']);
+  const checkoutError = err.expose === true && checkoutCodes.has(err.code);
+  res.status(status).json({ erro: publicMessage, referencia: req.requestId || undefined,
+    ...(checkoutError ? { code: err.code, checkout: err.checkout || undefined } : {}) });
 });
 
 app.listen(PORT, () => {

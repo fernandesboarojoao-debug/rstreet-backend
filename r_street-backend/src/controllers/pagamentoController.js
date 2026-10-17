@@ -90,17 +90,34 @@ function preferenceResponse(pedido) {
     init_point: pedido.mp_init_point,
     sandbox_init_point: pedido.mp_sandbox_init_point || null,
     reutilizado: true,
+    reserva_expira_em: pedido.reserva_expira_em || null,
+    total: Number(pedido.total),
   };
+}
+
+function assertReusableOrder(existing) {
+  const error = (message, code) => Object.assign(erroPedido(message, 409), { code });
+  if (['em_analise', 'processando_pagamento'].includes(existing.status)) {
+    throw error('O pagamento deste pedido ainda está em análise. Acompanhe o pedido antes de iniciar outro pagamento.', 'CHECKOUT_PROCESSING');
+  }
+  const retryRejected = existing.status === 'recusado' && existing.reserva_estado === 'ativa';
+  if ((!retryRejected && existing.status !== 'pendente') || existing.reserva_estado === 'liberada') {
+    throw error('Esta tentativa foi encerrada. Confira o pedido e revise o carrinho antes de iniciar outra compra.', 'CHECKOUT_CLOSED');
+  }
+  const expires = Date.parse(existing.reserva_expira_em || '');
+  if (existing.reserva_estado === 'ativa' && (!Number.isFinite(expires) || expires <= Date.now())) {
+    throw error('O prazo deste pagamento terminou. A liberação do estoque depende da verificação dos pagamentos pendentes. Aguarde alguns minutos e revise o carrinho.', 'CHECKOUT_EXPIRED');
+  }
 }
 
 async function findReusableOrder(token, fingerprint) {
   const existing = await db.buscarPedidoPorCheckoutToken(token);
   if (!existing) return null;
-  if (existing.status !== 'pendente') {
-    throw erroPedido('Este pedido ja foi finalizado ou cancelado. Inicie um novo checkout.', 409);
-  }
+  assertReusableOrder(existing);
   if (existing.checkout_fingerprint !== fingerprint) {
-    throw erroPedido('O carrinho mudou. Atualize o checkout antes de tentar novamente.', 409);
+    throw Object.assign(erroPedido('Já existe um pagamento iniciado com outros dados. As alterações de endereço, entrega ou pagamento não foram aplicadas ao pedido anterior. Você pode retomar esse pedido ou aguardar o encerramento da reserva para fazer outro.', 409), {
+      code: 'CHECKOUT_CHANGED', checkout: preferenceResponse(existing),
+    });
   }
   const response = preferenceResponse(existing);
   if (response) return response;
@@ -252,16 +269,34 @@ async function criarPagamento(req, res) {
   }
 
   const checkoutToken = normalizeCheckoutToken(pedidoData.checkout_token);
-  const normalized = normalizeCustomerAndAddress(pedidoData);
-  normalized.endereco = await validarEnderecoPorCep(normalized.endereco);
   const existing = await db.buscarPedidoPorCheckoutToken(checkoutToken);
-  if (existing && existing.status !== 'pendente') {
-    throw erroPedido('Este pedido ja foi finalizado ou cancelado. Inicie um novo checkout.', 409);
+  let normalized;
+  let pedidoSeguro;
+  try {
+    normalized = normalizeCustomerAndAddress(pedidoData);
+    normalized.endereco = await validarEnderecoPorCep(normalized.endereco);
+    if (!existing) pedidoSeguro = await montarPedidoSeguro({ ...pedidoData, ...normalized });
+  } catch (err) {
+    // Only retire an attempt known not to have created a payment, including in another tab.
+    if (!existing && err.expose === true && err.status >= 400 && err.status < 500
+      && !await db.buscarPedidoPorCheckoutToken(checkoutToken)) err.code = 'CHECKOUT_REVALIDATE';
+    throw err;
   }
-  const pedidoSeguro = await montarPedidoSeguro(
-    { ...pedidoData, ...normalized },
-    { skipStockCheck: Boolean(existing) }
-  );
+  if (existing) {
+    assertReusableOrder(existing);
+    // Retry the immutable order, even if catalog prices or availability changed.
+    const savedItems = await db.buscarItensPedido(existing.id);
+    const requestedItems = agruparItensRecebidos(pedidoData.itens).map(item => {
+      const saved = savedItems.find(saved => Number(saved.produto_id) === Number(item.id)
+        && Number(saved.produto_variante_id || 0) === Number(item.produto_variante_id || 0));
+      const price = saved ? Number(saved.preco_unitario) : -1;
+      return { ...item, preco_pagamento: pedidoData.metodo_pagamento === 'pix'
+        ? arredondarMoeda(price * (1 - PIX_DISCOUNT_RATE)) : price };
+    });
+    const fingerprint = checkoutFingerprint({ ...pedidoData, ...normalized, itens: requestedItems,
+      frete: { tipo: String(pedidoData.frete?.tipo || ''), valor: Number(pedidoData.frete?.valor) }, total: Number(pedidoData.total) });
+    return res.json(await findReusableOrder(checkoutToken, fingerprint));
+  }
   pedidoSeguro.checkout_token = checkoutToken;
   pedidoSeguro.checkout_fingerprint = checkoutFingerprint(pedidoSeguro);
 
@@ -281,6 +316,7 @@ async function criarPagamento(req, res) {
   }
   console.log(`Pedido criado: #${pedido.id}`);
 
+  let preferenceRequested = false;
   try {
     await db.criarItensPedido(pedido.id, pedidoSeguro.itens);
 
@@ -289,6 +325,7 @@ async function criarPagamento(req, res) {
       pedidoSeguro.reserva_expira_em = reservado.reserva_expira_em;
     }
 
+    preferenceRequested = true;
     const preferencia = await mp.criarPreferencia(pedidoSeguro, pedido.id);
     console.log(`Preferencia MP criada: ${preferencia.id}`);
 
@@ -302,8 +339,19 @@ async function criarPagamento(req, res) {
       pedido_id: pedido.id,
       init_point: preferencia.init_point,
       sandbox_init_point: preferencia.sandbox_init_point,
+      reserva_expira_em: pedidoSeguro.reserva_expira_em || null,
+      total: pedidoSeguro.total,
     });
   } catch (err) {
+    if (preferenceRequested) {
+      // A timeout or failed database write does not prove that Mercado Pago failed.
+      // Keep the token and reservation for reconciliation instead of enabling a second checkout.
+      console.error(`Pagamento do pedido #${pedido.id} precisa de verificacao:`, err.message);
+      throw Object.assign(erroPedido('Não foi possível confirmar a abertura do pagamento. Aguarde alguns minutos e tente novamente. A reserva será verificada antes de liberar uma nova tentativa.', 503), {
+        code: 'CHECKOUT_PROCESSING',
+      });
+    }
+    let cleaned = false;
     try {
       if (reservasAtivadas()) {
         await db.liberarReservaPedido(pedido.id);
@@ -313,14 +361,17 @@ async function criarPagamento(req, res) {
         checkout_token: null,
         checkout_fingerprint: null,
       });
+      cleaned = true;
     } catch (cleanupErr) {
       console.error(`Falha ao cancelar pedido incompleto #${pedido.id}:`, cleanupErr.message);
     }
     if (/estoque insuficiente|indisponivel|preco mudou|escolha uma variacao/i.test(err.message)) {
-      throw erroPedido('O estoque ou preco mudou. Revise o carrinho antes de continuar.', 409);
+      throw Object.assign(erroPedido('O estoque ou preço mudou. Revise o carrinho antes de continuar.', 409), {
+        ...(cleaned ? { code: 'CHECKOUT_REVALIDATE' } : {}),
+      });
     }
     throw err;
   }
 }
 
-module.exports = { criarPagamento, montarPedidoSeguro, normalizeCheckoutToken, checkoutFingerprint, findReusableOrder };
+module.exports = { criarPagamento, montarPedidoSeguro, normalizeCheckoutToken, checkoutFingerprint, findReusableOrder, assertReusableOrder };

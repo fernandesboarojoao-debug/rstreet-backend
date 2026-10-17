@@ -105,7 +105,7 @@ router.patch('/pedidos/:id', async (req, res) => {
   }
   if (!Object.keys(payload).length) return res.status(400).json({ erro: 'Nenhum campo permitido para atualizar.' });
 
-  const rows = await sb(`/pedidos?id=eq.${id}&select=id,status,envio_status,mp_preference_id,reserva_estado`);
+  const rows = await sb(`/pedidos?id=eq.${id}&select=id,status,envio_status,mp_preference_id,checkout_token,reserva_estado`);
   const atual = rows?.[0];
   if (!atual) return res.status(404).json({ erro: 'Pedido não encontrado.' });
 
@@ -113,8 +113,7 @@ router.patch('/pedidos/:id', async (req, res) => {
     if (atual.reserva_estado === 'ativa' && payload.status !== atual.status) {
       return res.status(409).json({ erro: 'Este pedido tem estoque reservado. Aguarde a confirmação automática do pagamento.' });
     }
-    const financeiros = new Set(['pago', 'reembolsado', 'estornado', 'estoque_indisponivel']);
-    if (atual.mp_preference_id && financeiros.has(payload.status) && payload.status !== atual.status) {
+    if ((atual.mp_preference_id || atual.checkout_token) && payload.status !== atual.status) {
       return res.status(409).json({ erro: 'O status financeiro deste pedido é atualizado automaticamente pelo Mercado Pago.' });
     }
   }

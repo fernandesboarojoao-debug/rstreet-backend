@@ -64,3 +64,24 @@ test('admin can still update shipping and manual orders safely', async () => {
   assert.equal(paid.statusCode, 200);
   assert.equal(manual.calls.filter(call => call.method === 'PATCH').length, 1);
 });
+
+test('admin cannot downgrade a Mercado Pago order or notify a false cancellation', async () => {
+  for (const status of ['pago', 'reembolsado', 'estornado']) {
+    for (const target of ['cancelado', 'pendente', 'recusado', 'em_analise']) {
+      const { route, calls, notifications } = loadRoute({ id: 1, status, mp_preference_id: 'pref', reserva_estado: 'consumida' });
+      const res = response();
+      await route({ params: { id: '1' }, body: { status: target } }, res);
+      assert.equal(res.statusCode, 409);
+      assert.equal(calls.some(call => call.method === 'PATCH'), false);
+      assert.equal(notifications.length, 0);
+    }
+  }
+});
+
+test('admin cannot mark an online order paid while its preference is still being created', async () => {
+  const { route, calls } = loadRoute({ id: 1, status: 'pendente', checkout_token: 'checkout-in-progress', mp_preference_id: null });
+  const res = response();
+  await route({ params: { id: '1' }, body: { status: 'pago' } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.equal(calls.some(call => call.method === 'PATCH'), false);
+});
