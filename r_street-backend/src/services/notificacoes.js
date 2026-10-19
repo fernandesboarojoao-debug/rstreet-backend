@@ -127,6 +127,10 @@ async function sendOrderNotification(pedidoId, eventKey) {
       }),
     };
     for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        const current = await db.buscarPedido(pedidoId);
+        if (currentOrderEvent(current) !== eventKey || current?.cliente_email !== pedido.cliente_email) return { skipped: true };
+      }
       try {
         const response = await fetch('https://api.resend.com/emails', {
           ...options, signal: AbortSignal.timeout(10000),

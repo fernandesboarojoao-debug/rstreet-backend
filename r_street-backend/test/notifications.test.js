@@ -83,3 +83,23 @@ test('notification retries a temporary error with the same payload and deduplica
     if (saved.from === undefined) delete process.env.EMAIL_FROM; else process.env.EMAIL_FROM = saved.from;
   }
 });
+
+test('notification retry stops if the order status or recipient changed', async () => {
+  const saved = { fetch: global.fetch, order: db.buscarPedido, items: db.buscarItensPedido, key: process.env.RESEND_API_KEY, from: process.env.EMAIL_FROM };
+  try {
+    process.env.RESEND_API_KEY = 'fixture-key'; process.env.EMAIL_FROM = 'fixture@example.test';
+    db.buscarItensPedido = async () => [];
+    for (const change of [{ status: 'cancelado' }, { cliente_email: 'other@example.test' }]) {
+      let reads = 0, sends = 0;
+      db.buscarPedido = async () => ({ id: 718, status: 'pago', cliente_email: 'buyer@example.test', total: 10, ...(++reads > 1 ? change : {}) });
+      global.fetch = async () => { sends++; return { ok: false, status: 503, text: async () => '{}' }; };
+      assert.deepEqual(await notifications.notificarPedido(718, 'pagamento_aprovado'), { skipped: true });
+      assert.equal(sends, 1);
+      assert.equal(reads, 2);
+    }
+  } finally {
+    global.fetch = saved.fetch; db.buscarPedido = saved.order; db.buscarItensPedido = saved.items;
+    if (saved.key === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = saved.key;
+    if (saved.from === undefined) delete process.env.EMAIL_FROM; else process.env.EMAIL_FROM = saved.from;
+  }
+});

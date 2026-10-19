@@ -135,7 +135,7 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', app: 'R Street Backend', release: '2026-10-19-insights', time: new Date().toISOString() });
+  res.json({ status: 'ok', app: 'R Street Backend', release: '2026-10-19-notice-privacy', time: new Date().toISOString() });
 });
 
 app.use((req, res) => {
