@@ -39,3 +39,47 @@ test('template de aviso escapa dados do cliente e do produto', () => {
   assert.match(html, /&lt;script&gt;/);
   assert.match(html, /Pagamento aprovado/);
 });
+
+test('current notification never announces shipping for an unpaid or refunded order', () => {
+  assert.equal(notifications.currentOrderEvent({ status: 'pendente', envio_status: 'enviado' }), null);
+  assert.equal(notifications.currentOrderEvent({ status: 'pago', envio_status: 'enviado' }), 'enviado');
+  assert.equal(notifications.currentOrderEvent({ status: 'pago', envio_status: 'aguardando_envio' }), 'pagamento_aprovado');
+  assert.equal(notifications.currentOrderEvent({ status: 'reembolsado', envio_status: 'entregue' }), 'reembolsado');
+  assert.equal(notifications.currentOrderEvent({ status: 'estornado' }), null);
+  assert.equal(notifications.currentOrderEvent({ status: 'estoque_indisponivel' }), null);
+});
+
+test('email rejects executable tracking URLs and links directly to the order without personal data', () => {
+  const html = notifications.renderEmail({ id: 9, rastreio_url: 'javascript:alert(1)', total: 10 }, notifications.EVENTS.enviado, []);
+  assert.doesNotMatch(html, /javascript:/);
+  assert.match(html, /acompanhar\.html\?pedido=9/);
+});
+
+test('notification retries a temporary error with the same payload and deduplicates concurrent requests', async () => {
+  const saved = { fetch: global.fetch, order: db.buscarPedido, items: db.buscarItensPedido,
+    key: process.env.RESEND_API_KEY, from: process.env.EMAIL_FROM };
+  const calls = [];
+  try {
+    process.env.RESEND_API_KEY = 'fixture-key'; process.env.EMAIL_FROM = 'fixture@example.test';
+    db.buscarPedido = async () => ({ id: 717, status: 'pago', cliente_email: 'buyer@example.test', total: 10 });
+    db.buscarItensPedido = async () => [];
+    global.fetch = async (url, options) => {
+      assert.equal(url, 'https://api.resend.com/emails');
+      calls.push(options);
+      return { ok: calls.length > 1, status: calls.length > 1 ? 200 : 503, text: async () => '{}' };
+    };
+    const results = await Promise.all([notifications.notificarPedido(717, 'pagamento_aprovado'), notifications.notificarPedido(717, 'pagamento_aprovado')]);
+    assert.ok(results.every(result => result.sent));
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].body, calls[1].body);
+    assert.equal(calls[0].headers['Idempotency-Key'], calls[1].headers['Idempotency-Key']);
+    calls.length = 0;
+    db.buscarPedido = async () => ({ id: 717, status: 'cancelado', cliente_email: 'buyer@example.test' });
+    assert.deepEqual(await notifications.notificarPedido(717, 'pagamento_aprovado'), { skipped: true });
+    assert.equal(calls.length, 0);
+  } finally {
+    global.fetch = saved.fetch; db.buscarPedido = saved.order; db.buscarItensPedido = saved.items;
+    if (saved.key === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = saved.key;
+    if (saved.from === undefined) delete process.env.EMAIL_FROM; else process.env.EMAIL_FROM = saved.from;
+  }
+});

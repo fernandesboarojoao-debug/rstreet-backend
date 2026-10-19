@@ -3,6 +3,10 @@ const express = require('express');
 const router  = express.Router();
 const { requireAdmin } = require('../middleware/adminAuth');
 const { notificarPedido } = require('../services/notificacoes');
+const { loadMetrics } = require('../services/metricas');
+const notifications = require('../services/notificacoes');
+const db = require('../services/db');
+const { reservasAtivadas } = require('../services/reservas');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -157,46 +161,47 @@ router.patch('/avaliacoes/:id', async (req, res) => {
 
 // GET /api/admin/metricas — resumo anônimo das visitas e intenções de compra
 router.get('/metricas', async (req, res) => {
-  const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const [events, paidOrders, soldItems] = await Promise.all([
-    sb(`/metricas_eventos?criado_em=gte.${encodeURIComponent(since)}&select=tipo,produto_id,marca,categoria,valor,criado_em&order=criado_em.desc&limit=8000`),
-    sb(`/pedidos?status=eq.pago&pago_em=gte.${encodeURIComponent(since)}&select=id,total`),
-    sb(`/itens_pedido?select=produto_id,quantidade,pedidos!inner(status,pago_em)&pedidos.status=eq.pago&pedidos.pago_em=gte.${encodeURIComponent(since)}`),
-  ]);
-  const rows = events || [];
-  const totals = { page_view: 0, view_item: 0, add_to_cart: 0, begin_checkout: 0, purchase: 0, whatsapp: 0 };
-  const productMap = new Map();
+  const days = Number(req.query.dias || 30);
+  if (![7, 30, 90].includes(days)) return res.status(400).json({ erro: 'Escolha um período de 7, 30 ou 90 dias.' });
+  return res.json(await loadMetrics(sb, days));
+});
 
-  rows.forEach(event => {
-    if (event.tipo !== 'purchase' && Object.prototype.hasOwnProperty.call(totals, event.tipo)) totals[event.tipo] += 1;
-    if (!event.produto_id) return;
-    const key = Number(event.produto_id);
-    const item = productMap.get(key) || { produto_id: key, visualizacoes: 0, carrinhos: 0, checkouts: 0, compras: 0 };
-    if (event.tipo === 'view_item') item.visualizacoes += 1;
-    if (event.tipo === 'add_to_cart') item.carrinhos += 1;
-    if (event.tipo === 'begin_checkout_item') item.checkouts += 1;
-    productMap.set(key, item);
-  });
+router.get('/operacao', (req, res) => {
+  res.json({ email: { configurado: notifications.isConfigured(), provedor: 'Resend',
+    chave_configurada: Boolean(process.env.RESEND_API_KEY), remetente_configurado: Boolean(process.env.EMAIL_FROM) },
+    estoque: { reservas_ativas: reservasAtivadas(), integracao_fisica: 'aguardando_formato' },
+    eventos_email: Object.keys(notifications.EVENTS), versao: 1 });
+});
 
-  totals.purchase = (paidOrders || []).length;
-  for (const item of soldItems || []) {
-    const key = Number(item.produto_id);
-    if (!Number.isInteger(key)) continue;
-    const current = productMap.get(key) || { produto_id: key, visualizacoes: 0, carrinhos: 0, checkouts: 0, compras: 0 };
-    current.compras += Number(item.quantidade) || 0;
-    productMap.set(key, current);
-  }
+router.post('/pedidos/:id/aviso', async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ erro: 'Pedido inválido.' });
+  const pedido = await db.buscarPedido(id);
+  if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado.' });
+  const event = notifications.currentOrderEvent(pedido);
+  if (!event) return res.status(409).json({ erro: 'Este pedido ainda não tem uma atualização confirmada para enviar.' });
+  if (!notifications.isConfigured()) return res.status(409).json({ erro: 'Configure o e-mail da loja antes de enviar avisos.' });
+  const result = await notificarPedido(id, event);
+  if (!result.sent) return res.status(503).json({ erro: 'O aviso não foi enviado. Confira a configuração de e-mail e tente novamente.' });
+  res.json({ ok: true, evento: event, mensagem: 'Aviso enviado ou já confirmado pelo provedor.' });
+});
 
-  const ids = [...productMap.keys()].slice(0, 100);
-  const products = ids.length ? await sb(`/produtos?id=in.(${ids.join(',')})&select=id,nome,marca`) : [];
-  const names = new Map((products || []).map(product => [Number(product.id), product]));
-  const topProducts = [...productMap.values()]
-    .map(item => ({ ...item, nome: names.get(item.produto_id)?.nome || `Produto #${item.produto_id}`, marca: names.get(item.produto_id)?.marca || '' }))
-    .sort((a, b) => (b.carrinhos + b.visualizacoes) - (a.carrinhos + a.visualizacoes))
-    .slice(0, 12);
-
-  const receita = (paidOrders || []).reduce((sum, order) => sum + (Number(order.total) || 0), 0);
-  res.json({ periodo_dias: 30, totais: totals, receita, produtos: topProducts });
+router.get('/pedidos/:id/integracao', async (req, res) => {
+  const id = parsePositiveId(req.params.id);
+  if (!id) return res.status(400).json({ erro: 'Pedido inválido.' });
+  const pedido = await db.buscarPedido(id);
+  if (!pedido) return res.status(404).json({ erro: 'Pedido não encontrado.' });
+  if (pedido.status !== 'pago') return res.status(409).json({ erro: 'A exportação de venda exige pagamento confirmado.' });
+  const items = await db.buscarItensPedido(id);
+  const ids = [...new Set(items.map(item => Number(item.produto_id)).filter(Number.isSafeInteger))];
+  const products = ids.length ? await sb(`/produtos?id=in.(${ids.join(',')})&select=id,referencia`) : [];
+  const refs = new Map((products || []).map(product => [Number(product.id), product.referencia]));
+  res.set('Cache-Control', 'no-store');
+  res.json({ formato: 'rstreet.venda.v1', evento_id: `rstreet:pedido:${id}:pago`, pedido_id: id,
+    status: 'pago', pago_em: pedido.pago_em, total: Number(pedido.total),
+    itens: items.map(item => ({ produto_id: item.produto_id, variante_id: item.produto_variante_id,
+      referencia: refs.get(Number(item.produto_id)) || null, nome: item.nome_produto,
+      cor: item.cor, tamanho: item.tamanho, quantidade: Number(item.quantidade) })) });
 });
 
 // GET /api/admin/home-destaques — lista cards editaveis da home

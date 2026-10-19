@@ -58,6 +58,20 @@ function isConfigured() {
   return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
 }
 
+function currentOrderEvent(pedido) {
+  if (pedido?.status === 'reembolsado') return 'reembolsado';
+  if (pedido?.status === 'cancelado') return 'cancelado';
+  if (pedido?.status !== 'pago') return null;
+  return EVENTS[pedido.envio_status] ? pedido.envio_status : 'pagamento_aprovado';
+}
+
+function safeTrackingUrl(value) {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
+  } catch { return null; }
+}
+
 function renderEmail(pedido, event, itens) {
   const total = Number(pedido.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   const rows = (itens || []).map(item => {
@@ -67,15 +81,26 @@ function renderEmail(pedido, event, itens) {
   const tracking = pedido.codigo_rastreio
     ? `<p style="margin:18px 0 0"><strong>Código de rastreio:</strong> ${escapeHtml(pedido.codigo_rastreio)}</p>`
     : '';
-  const trackingLink = pedido.rastreio_url
-    ? `<p style="margin:12px 0"><a href="${escapeHtml(pedido.rastreio_url)}" style="color:#8a681e;font-weight:700">Acompanhar entrega</a></p>`
+  const trackingUrl = safeTrackingUrl(pedido.rastreio_url);
+  const trackingLink = trackingUrl
+    ? `<p style="margin:12px 0"><a href="${escapeHtml(trackingUrl)}" style="color:#8a681e;font-weight:700">Acompanhar entrega</a></p>`
     : '';
-  const orderLink = `${FRONTEND_URL}/acompanhar.html`;
+  const orderLink = `${FRONTEND_URL}/acompanhar.html?pedido=${encodeURIComponent(pedido.id)}`;
 
   return `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#f4f4f4;font-family:Arial,sans-serif;color:#171717"><div style="display:none;max-height:0;overflow:hidden">${escapeHtml(event.message)}</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="padding:28px 12px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:auto;background:#fff;border:1px solid #dedede"><tr><td style="padding:28px;background:#0b0b0b;color:#fff"><div style="font-size:25px;font-weight:800;letter-spacing:3px">R.STREET</div></td></tr><tr><td style="padding:30px"><p style="margin:0 0 8px;color:#96722d;font-weight:700;text-transform:uppercase;letter-spacing:1px">Pedido #${pedido.id}</p><h1 style="margin:0 0 14px;font-size:25px">${escapeHtml(event.title)}</h1><p style="margin:0 0 22px;line-height:1.6">Olá, ${escapeHtml(pedido.cliente_nome || 'cliente')}. ${escapeHtml(event.message)}</p>${rows ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 18px">${rows}</table>` : ''}<p style="font-size:18px"><strong>Total: ${escapeHtml(total)}</strong></p>${tracking}${trackingLink}<p style="margin:24px 0 0"><a href="${orderLink}" style="display:inline-block;background:#c8a96e;color:#111;padding:13px 18px;text-decoration:none;font-weight:700">Acompanhar pedido</a></p></td></tr><tr><td style="padding:20px 30px;background:#f7f7f7;color:#666;font-size:12px;line-height:1.5">R Street Moda Masculina. Esta mensagem foi enviada por causa de uma atualização no seu pedido.</td></tr></table></td></tr></table></body></html>`;
 }
 
-async function notificarPedido(pedidoId, eventKey) {
+const inFlight = new Map();
+
+function notificarPedido(pedidoId, eventKey) {
+  const key = `${pedidoId}:${eventKey}`;
+  if (inFlight.has(key)) return inFlight.get(key);
+  const pending = sendOrderNotification(pedidoId, eventKey).finally(() => inFlight.delete(key));
+  inFlight.set(key, pending);
+  return pending;
+}
+
+async function sendOrderNotification(pedidoId, eventKey) {
   const event = EVENTS[eventKey];
   if (!event || !isConfigured()) return { skipped: true };
 
@@ -84,9 +109,9 @@ async function notificarPedido(pedidoId, eventKey) {
       db.buscarPedido(pedidoId),
       db.buscarItensPedido(pedidoId),
     ]);
-    if (!pedido?.cliente_email) return { skipped: true };
+    if (!pedido?.cliente_email || currentOrderEvent(pedido) !== eventKey) return { skipped: true };
 
-    const response = await fetch('https://api.resend.com/emails', {
+    const options = {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
@@ -100,14 +125,25 @@ async function notificarPedido(pedidoId, eventKey) {
         subject: event.subject(pedido),
         html: renderEmail(pedido, event, itens),
       }),
-    });
-    const responseText = await response.text();
-    if (!response.ok) throw new Error(`Resend ${response.status}: ${responseText.slice(0, 300)}`);
-    return { sent: true };
+    };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = await fetch('https://api.resend.com/emails', {
+          ...options, signal: AbortSignal.timeout(10000),
+        });
+        await response.text();
+        if (response.ok) return { sent: true };
+        if (response.status !== 429 && response.status < 500) return { sent: false, error: true };
+      } catch (error) {
+        if (attempt === 2) throw error;
+      }
+      if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+    return { sent: false, error: true };
   } catch (error) {
-    console.error(`Falha ao enviar aviso do pedido #${pedidoId}:`, error.message);
+    console.error(`Falha ao enviar aviso do pedido #${pedidoId} (${error.name || 'erro'}).`);
     return { sent: false, error: true };
   }
 }
 
-module.exports = { EVENTS, escapeHtml, isConfigured, notificarPedido, renderEmail };
+module.exports = { EVENTS, escapeHtml, isConfigured, currentOrderEvent, notificarPedido, renderEmail };
