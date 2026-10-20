@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Backend R Street Moda Masculina",
   "main": "src/server.js",
+  "packageManager": "pnpm@11.25.0",
   "engines": {
     "node": ">=18"
   },
@@ -23,6 +24,7 @@
     "nodemon": "3.1.14"
   },
   "overrides": {
-    "qs": "6.16.0"
+    "qs": "6.16.0",
+    "proxy-addr": "2.0.8"
   }
 }
