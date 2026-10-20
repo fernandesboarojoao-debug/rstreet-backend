@@ -55,6 +55,38 @@ test('email rejects executable tracking URLs and links directly to the order wit
   assert.match(html, /acompanhar\.html\?pedido=9/);
 });
 
+test('cancelled, refunded and pickup emails do not show stale delivery tracking', () => {
+  const order = { id: 9, total: 10, codigo_rastreio: 'OLD123', rastreio_url: 'https://example.test/tracking' };
+  for (const event of ['cancelado', 'reembolsado', 'pagamento_aprovado', 'retirada_disponivel', 'retirado']) {
+    const html = notifications.renderEmail(order, notifications.EVENTS[event], []);
+    assert.doesNotMatch(html, /OLD123|example\.test\/tracking/);
+  }
+  assert.match(notifications.renderEmail(order, notifications.EVENTS.enviado, []), /OLD123/);
+});
+
+test('identical notices keep their key but corrected tracking gets a new delivery key', async () => {
+  const saved = { fetch: global.fetch, order: db.buscarPedido, items: db.buscarItensPedido, key: process.env.RESEND_API_KEY, from: process.env.EMAIL_FROM };
+  const keys = [];
+  let tracking = 'BR123';
+  try {
+    process.env.RESEND_API_KEY = 'fixture-key'; process.env.EMAIL_FROM = 'fixture@example.test';
+    db.buscarPedido = async () => ({ id: 719, status: 'pago', envio_status: 'enviado', cliente_email: 'buyer@example.test', codigo_rastreio: tracking });
+    db.buscarItensPedido = async () => [];
+    global.fetch = async (_url, options) => { keys.push(options.headers['Idempotency-Key']); return { ok: true, text: async () => '{}' }; };
+    await notifications.notificarPedido(719, 'enviado');
+    await notifications.notificarPedido(719, 'enviado');
+    tracking = 'BR456';
+    await notifications.notificarPedido(719, 'enviado');
+    assert.equal(keys[0], keys[1]);
+    assert.notEqual(keys[1], keys[2]);
+    assert.ok(keys.every(key => key.length <= 256 && !key.includes('buyer@')));
+  } finally {
+    global.fetch = saved.fetch; db.buscarPedido = saved.order; db.buscarItensPedido = saved.items;
+    if (saved.key === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = saved.key;
+    if (saved.from === undefined) delete process.env.EMAIL_FROM; else process.env.EMAIL_FROM = saved.from;
+  }
+});
+
 test('notification retries a temporary error with the same payload and deduplicates concurrent requests', async () => {
   const saved = { fetch: global.fetch, order: db.buscarPedido, items: db.buscarItensPedido,
     key: process.env.RESEND_API_KEY, from: process.env.EMAIL_FROM };

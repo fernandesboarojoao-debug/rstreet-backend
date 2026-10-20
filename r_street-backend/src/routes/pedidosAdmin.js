@@ -120,11 +120,20 @@ router.patch('/pedidos/:id', async (req, res) => {
     if ((atual.mp_preference_id || atual.checkout_token) && payload.status !== atual.status) {
       return res.status(409).json({ erro: 'O status financeiro deste pedido é atualizado automaticamente pelo Mercado Pago.' });
     }
+    // A stale admin form must never rewrite a financial state owned by the payment webhook.
+    if (atual.mp_preference_id || atual.checkout_token) delete payload.status;
+  }
+  const nextStatus = payload.status || atual.status;
+  if (payload.envio_status && payload.envio_status !== atual.envio_status &&
+      payload.envio_status !== 'aguardando_envio' && nextStatus !== 'pago') {
+    return res.status(409).json({ erro: 'Confirme o pagamento antes de avançar a preparação, o envio ou a retirada.' });
   }
   payload.atualizado_em = new Date().toISOString();
 
-  const data = await sb(`/pedidos?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
-  const nextStatus = payload.status || atual.status;
+  const data = await sb(`/pedidos?id=eq.${id}&status=eq.${encodeURIComponent(atual.status)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  if (!Array.isArray(data) || !data.length) {
+    return res.status(409).json({ erro: 'O pedido mudou enquanto você editava. Atualize a lista antes de salvar novamente.' });
+  }
   const nextShipping = payload.envio_status || atual.envio_status;
   if (nextStatus !== atual.status && ['pago', 'cancelado', 'reembolsado'].includes(nextStatus)) {
     void notificarPedido(id, nextStatus === 'pago' ? 'pagamento_aprovado' : nextStatus);

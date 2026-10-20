@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function loadRoute(currentOrder) {
+function loadRoute(currentOrder, conflict = false) {
   const routes = new Map();
   const calls = [];
   const notifications = [];
@@ -21,7 +21,7 @@ function loadRoute(currentOrder) {
     },
     fetch: async (url, options = {}) => {
       calls.push({ url, ...options });
-      const data = options.method === 'PATCH' ? [{ id: 1, ...JSON.parse(options.body) }] : (currentOrder ? [currentOrder] : []);
+      const data = options.method === 'PATCH' ? (conflict ? [] : [{ id: 1, ...JSON.parse(options.body) }]) : (currentOrder ? [currentOrder] : []);
       return { ok: true, text: async () => JSON.stringify(data) };
     },
   });
@@ -84,4 +84,36 @@ test('admin cannot mark an online order paid while its preference is still being
   await route({ params: { id: '1' }, body: { status: 'pago' } }, res);
   assert.equal(res.statusCode, 409);
   assert.equal(calls.some(call => call.method === 'PATCH'), false);
+});
+
+test('a stale online form never rewrites its financial status while updating tracking', async () => {
+  const { route, calls } = loadRoute({ id: 1, status: 'pendente', mp_preference_id: 'pref' });
+  const res = response();
+  await route({ params: { id: '1' }, body: { status: 'pendente', codigo_rastreio: 'BR123' } }, res);
+  assert.equal(res.statusCode, 200);
+  const update = calls.find(call => call.method === 'PATCH');
+  assert.equal(Object.hasOwn(JSON.parse(update.body), 'status'), false);
+  assert.match(update.url, /status=eq\.pendente/);
+});
+
+test('a concurrent payment change rejects stale shipping updates without sending notices', async () => {
+  const { route, calls, notifications } = loadRoute({ id: 1, status: 'pago', envio_status: 'em_preparacao', mp_preference_id: 'pref' }, true);
+  const res = response();
+  await route({ params: { id: '1' }, body: { envio_status: 'enviado' } }, res);
+  assert.equal(res.statusCode, 409);
+  assert.match(res.data.erro, /mudou/);
+  assert.match(calls.find(call => call.method === 'PATCH').url, /status=eq\.pago/);
+  assert.equal(notifications.length, 0);
+});
+
+test('unpaid or refunded orders cannot advance to preparation, delivery or collection', async () => {
+  for (const status of ['pendente', 'reembolsado', 'cancelado']) {
+    for (const envio_status of ['em_preparacao', 'enviado', 'entregue', 'retirada_disponivel', 'retirado']) {
+      const { route, calls } = loadRoute({ id: 1, status, envio_status: 'aguardando_envio', mp_preference_id: 'pref' });
+      const res = response();
+      await route({ params: { id: '1' }, body: { envio_status } }, res);
+      assert.equal(res.statusCode, 409);
+      assert.equal(calls.some(call => call.method === 'PATCH'), false);
+    }
+  }
 });

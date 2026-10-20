@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../services/db');
+const { readPages } = require('../services/metricas');
 
 const router = express.Router();
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -118,35 +119,30 @@ router.post('/metricas', async (req, res) => {
 });
 
 // Dados agregados para vitrines públicas. Não expõe clientes, pedidos ou valores.
+let showcaseCache = null;
+let showcaseRequest = null;
 router.get('/vitrines', async (req, res) => {
-  const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-  const count = new Map();
-  let salesHistoryAvailable = false;
-  try {
-    const soldItems = await sb('/itens_pedido?select=produto_id,quantidade,pedidos!inner(status)&pedidos.status=eq.pago');
-    salesHistoryAvailable = true;
-    (soldItems || []).forEach(item => {
-      const id = Number(item.produto_id);
-      const quantity = Math.max(1, Number(item.quantidade) || 1);
-      if (Number.isInteger(id) && id > 0) count.set(id, (count.get(id) || 0) + quantity);
-    });
-  } catch (error) {
-    // As metricas servem apenas como plano B se o historico de vendas nao estiver disponivel.
-    console.warn('Nao foi possivel consultar itens vendidos:', error.message);
+  if (!showcaseCache || showcaseCache.until <= Date.now()) {
+    if (!showcaseRequest) showcaseRequest = (async () => {
+      const since = new Date(Date.now() - 90 * 86400000).toISOString();
+      const sold = await readPages(path => sb(path, { signal: AbortSignal.timeout(10000) }), 'itens_pedido', { select: 'id,produto_id,quantidade,pedidos!inner(status,pago_em)',
+        'pedidos.status': 'eq.pago', 'pedidos.pago_em': `gte.${since}`, order: 'id.asc' });
+      const count = new Map();
+      sold.rows.forEach(item => {
+        const id = Number(item.produto_id);
+        const quantity = Number(item.quantidade);
+        if (Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(quantity) && quantity > 0) {
+          count.set(id, (count.get(id) || 0) + quantity);
+        }
+      });
+      const data = { mais_vendidos: [...count.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 10).map(([id]) => id),
+        periodo_dias: 90, amostra_limitada: sold.limited };
+      showcaseCache = { data, until: Date.now() + 60000 };
+    })().finally(() => { showcaseRequest = null; });
+    await showcaseRequest;
   }
-
-  if (!salesHistoryAvailable) {
-    const events = await sb(`/metricas_eventos?tipo=eq.purchase_item&criado_em=gte.${encodeURIComponent(since)}&produto_id=not.is.null&select=produto_id`);
-    (events || []).forEach(item => {
-      const id = Number(item.produto_id);
-      if (Number.isInteger(id) && id > 0) count.set(id, (count.get(id) || 0) + 1);
-    });
-  }
-  const maisVendidos = [...count.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
-    .map(([produto_id]) => produto_id);
-  res.json({ mais_vendidos: maisVendidos });
+  res.set('Cache-Control', 'public, max-age=60');
+  res.json(showcaseCache.data);
 });
 
 module.exports = router;

@@ -1,4 +1,5 @@
 const db = require('./db');
+const { createHash } = require('node:crypto');
 
 const FRONTEND_URL = String(process.env.FRONTEND_URL || 'https://www.rstreet.com.br').replace(/\/$/, '');
 
@@ -78,10 +79,11 @@ function renderEmail(pedido, event, itens) {
     const variant = [item.cor, item.tamanho].filter(Boolean).join(' / ');
     return `<tr><td style="padding:10px 0;border-bottom:1px solid #e8e8e8"><strong>${escapeHtml(item.nome_produto)}</strong>${variant ? `<br><span style="color:#666">${escapeHtml(variant)}</span>` : ''}</td><td style="padding:10px 0;border-bottom:1px solid #e8e8e8;text-align:right">${Number(item.quantidade) || 1}x</td></tr>`;
   }).join('');
-  const tracking = pedido.codigo_rastreio
+  const showTracking = event === EVENTS.enviado || event === EVENTS.entregue;
+  const tracking = showTracking && pedido.codigo_rastreio
     ? `<p style="margin:18px 0 0"><strong>Código de rastreio:</strong> ${escapeHtml(pedido.codigo_rastreio)}</p>`
     : '';
-  const trackingUrl = safeTrackingUrl(pedido.rastreio_url);
+  const trackingUrl = showTracking ? safeTrackingUrl(pedido.rastreio_url) : null;
   const trackingLink = trackingUrl
     ? `<p style="margin:12px 0"><a href="${escapeHtml(trackingUrl)}" style="color:#8a681e;font-weight:700">Acompanhar entrega</a></p>`
     : '';
@@ -111,20 +113,22 @@ async function sendOrderNotification(pedidoId, eventKey) {
     ]);
     if (!pedido?.cliente_email || currentOrderEvent(pedido) !== eventKey) return { skipped: true };
 
+    const body = JSON.stringify({
+      from: process.env.EMAIL_FROM,
+      to: [pedido.cliente_email],
+      ...(process.env.STORE_REPLY_TO ? { reply_to: process.env.STORE_REPLY_TO } : {}),
+      subject: event.subject(pedido),
+      html: renderEmail(pedido, event, itens),
+    });
+    const revision = createHash('sha256').update(body).digest('hex');
     const options = {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
         'Content-Type': 'application/json',
-        'Idempotency-Key': `rstreet-pedido-${pedido.id}-${eventKey}`,
+        'Idempotency-Key': `rstreet-pedido-${pedido.id}-${eventKey}-${revision}`,
       },
-      body: JSON.stringify({
-        from: process.env.EMAIL_FROM,
-        to: [pedido.cliente_email],
-        ...(process.env.STORE_REPLY_TO ? { reply_to: process.env.STORE_REPLY_TO } : {}),
-        subject: event.subject(pedido),
-        html: renderEmail(pedido, event, itens),
-      }),
+      body,
     };
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt > 0) {
