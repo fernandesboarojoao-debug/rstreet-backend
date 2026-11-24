@@ -3,6 +3,19 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { maintenanceGuard, operationStatus } = require('../src/middleware/maintenance');
 
+test('migration diagnostics preserve the existing admin operation response', async () => {
+  const router = require('../src/routes/pedidosAdmin');
+  const routes = router.stack.filter(layer => layer.route?.path === '/operacao');
+  assert.equal(routes.length, 1);
+  let body;
+  await routes[0].route.stack[0].handle({}, { json(value) { body = value; } });
+  assert.ok(body.email && body.estoque && Array.isArray(body.eventos_email));
+  assert.equal(body.versao, 1);
+  assert.equal(typeof body.checkoutMaintenance, 'boolean');
+  assert.equal(typeof body.migrationWriteLock, 'boolean');
+  assert.ok(!Object.hasOwn(body, 'SUPABASE_KEY'));
+});
+
 test('maintenance blocks new sales and migrations without blocking existing payments', () => {
   const old = { checkout: process.env.CHECKOUT_MAINTENANCE, lock: process.env.MIGRATION_WRITE_LOCK };
   function run(method, path) {

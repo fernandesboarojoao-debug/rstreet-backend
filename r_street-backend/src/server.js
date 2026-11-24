@@ -124,11 +124,6 @@ if (!isAdminAuthConfigured()) {
 }
 
 // ── ROTAS ────────────────────────────────────────────────
-app.get('/api/admin/operacao', requireAdmin, (req, res) => {
-  let databaseProject = null;
-  try { databaseProject = new URL(process.env.SUPABASE_URL).hostname.split('.')[0]; } catch (_) {}
-  res.json({ ...operationStatus(), databaseProject });
-});
 app.use('/api/pagamento', pagamentoRoutes);
 app.use('/api/pedidos',   pedidoRoutes);
 app.use('/api/webhook',   webhookRoutes);

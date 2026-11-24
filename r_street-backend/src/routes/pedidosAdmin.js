@@ -7,6 +7,7 @@ const { loadMetrics } = require('../services/metricas');
 const notifications = require('../services/notificacoes');
 const db = require('../services/db');
 const { reservasAtivadas } = require('../services/reservas');
+const { operationStatus } = require('../middleware/maintenance');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -176,10 +177,13 @@ router.get('/metricas', async (req, res) => {
 });
 
 router.get('/operacao', (req, res) => {
+  let databaseProject = null;
+  try { databaseProject = new URL(SUPABASE_URL).hostname.split('.')[0]; } catch (_) {}
   res.json({ email: { configurado: notifications.isConfigured(), provedor: 'Resend',
     chave_configurada: Boolean(process.env.RESEND_API_KEY), remetente_configurado: Boolean(process.env.EMAIL_FROM) },
     estoque: { reservas_ativas: reservasAtivadas(), integracao_fisica: 'aguardando_formato' },
-    eventos_email: Object.keys(notifications.EVENTS), versao: 1 });
+    eventos_email: Object.keys(notifications.EVENTS), versao: 1,
+    ...operationStatus(), databaseProject });
 });
 
 router.post('/pedidos/:id/aviso', async (req, res) => {
