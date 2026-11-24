@@ -28,7 +28,7 @@ test('maintenance blocks new sales and migrations without blocking existing paym
     process.env.CHECKOUT_MAINTENANCE = 'false'; process.env.MIGRATION_WRITE_LOCK = 'false';
     assert.equal(run('POST', '/api/pagamento/criar').allowed, true);
     process.env.CHECKOUT_MAINTENANCE = 'true';
-    for (const path of ['/api/pagamento/criar', '/api/pagamento/criar/']) {
+    for (const path of ['/api/pagamento/criar', '/api/pagamento/criar/', '/API/Pagamento/CRIAR']) {
       const result = run('POST', path); assert.equal(result.code, 503);
       assert.equal(result.headers['Cache-Control'], 'no-store'); assert.equal(result.body.code, 'STORE_MAINTENANCE');
     }

@@ -9,7 +9,7 @@ function operationStatus(env = process.env) {
 
 function maintenanceGuard(req, res, next) {
   const status = operationStatus();
-  const path = req.path.replace(/\/+$/, '') || '/';
+  const path = req.path.toLowerCase().replace(/\/+$/, '') || '/';
   const checkout = path === '/api/pagamento/criar';
   const read = ['GET', 'HEAD', 'OPTIONS'].includes(req.method);
   // Existing payments must still settle; tracking and login do not create sales.
