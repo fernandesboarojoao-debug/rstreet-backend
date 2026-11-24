@@ -13,6 +13,7 @@ const produtosRoutes     = require('./routes/produtos');
 const pedidosAdminRoutes = require('./routes/pedidosAdmin');
 const engajamentoRoutes  = require('./routes/engajamento');
 const { requireAdmin, isAdminAuthConfigured } = require('./middleware/adminAuth');
+const { maintenanceGuard, operationStatus } = require('./middleware/maintenance');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -92,6 +93,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type','Authorization'],
 }));
 
+app.use(maintenanceGuard);
+
 // ── Webhook do MP precisa do body RAW (antes do json()) ──
 app.use('/api/webhook/mercadopago', simpleRateLimit({ windowMs: 60 * 1000, max: 120, keyPrefix: 'webhook' }));
 app.use('/api/webhook', express.raw({ type: 'application/json', limit: '256kb' }));
@@ -121,6 +124,11 @@ if (!isAdminAuthConfigured()) {
 }
 
 // ── ROTAS ────────────────────────────────────────────────
+app.get('/api/admin/operacao', requireAdmin, (req, res) => {
+  let databaseProject = null;
+  try { databaseProject = new URL(process.env.SUPABASE_URL).hostname.split('.')[0]; } catch (_) {}
+  res.json({ ...operationStatus(), databaseProject });
+});
 app.use('/api/pagamento', pagamentoRoutes);
 app.use('/api/pedidos',   pedidoRoutes);
 app.use('/api/webhook',   webhookRoutes);
@@ -135,7 +143,7 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', app: 'R Street Backend', release: '2026-10-20-commerce-safety', time: new Date().toISOString() });
+  res.json({ status: 'ok', app: 'R Street Backend', release: '2026-11-24-database-cutover', time: new Date().toISOString() });
 });
 
 app.use((req, res) => {
@@ -158,6 +166,10 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () => {
+  if (operationStatus().migrationWriteLock) {
+    console.log('R Street Backend em migracao: novas gravacoes e tarefas periodicas pausadas.');
+    return;
+  }
   require('./services/reservas').iniciarReconciliacaoReservas();
   const db = require('./services/db');
   const cleanMetrics = () => db.limparMetricasAntigas().catch(err => console.error('Falha ao limpar métricas antigas:', err.message));
