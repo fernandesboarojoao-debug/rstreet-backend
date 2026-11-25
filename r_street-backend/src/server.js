@@ -108,6 +108,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use('/api/auth/login', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 8, keyPrefix: 'login' }));
 app.use('/api/pagamento/criar', simpleRateLimit({ windowMs: 60 * 1000, max: 12, keyPrefix: 'pagamento' }));
 app.post('/api/admin/pedidos/:id/aviso', requireAdmin, simpleRateLimit({ windowMs: 60 * 1000, max: 5, keyPrefix: 'aviso' }));
+app.post('/api/admin/operacao/teste-email', requireAdmin, simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 3, keyPrefix: 'teste-email' }));
 app.use('/api/pedidos/acompanhar', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 20, keyPrefix: 'acompanhar' }));
 app.use('/api/pedidos/confirmacao', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 30, keyPrefix: 'confirmacao' }));
 app.use('/api/engajamento/avaliacoes', (req, res, next) => {

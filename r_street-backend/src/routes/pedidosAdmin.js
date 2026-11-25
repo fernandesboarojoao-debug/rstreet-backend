@@ -8,6 +8,7 @@ const notifications = require('../services/notificacoes');
 const db = require('../services/db');
 const { reservasAtivadas } = require('../services/reservas');
 const { operationStatus } = require('../middleware/maintenance');
+const { validateTestEmail, sendTestEmail } = require('../services/testEmail');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -184,6 +185,16 @@ router.get('/operacao', (req, res) => {
     estoque: { reservas_ativas: reservasAtivadas(), integracao_fisica: 'aguardando_formato' },
     eventos_email: Object.keys(notifications.EVENTS), versao: 1,
     ...operationStatus(), databaseProject });
+});
+
+router.post('/operacao/teste-email', async (req, res) => {
+  const input = validateTestEmail(req.body);
+  if (!input) return res.status(400).json({ erro: 'Informe um e-mail valido e atualize a tentativa de teste.' });
+  const result = await sendTestEmail(input);
+  if (!result.configured) return res.status(409).json({ erro: 'Configure o remetente e a chave de e-mail no servidor.' });
+  if (!result.accepted) return res.status(503).json({ erro: 'O envio nao foi confirmado. Confira o Resend antes de tentar novamente.' });
+  res.json({ accepted: true, id: result.id,
+    mensagem: 'Teste aceito pelo provedor. Confira a caixa de entrada e o spam; isso ainda nao confirma o recebimento.' });
 });
 
 router.post('/pedidos/:id/aviso', async (req, res) => {
