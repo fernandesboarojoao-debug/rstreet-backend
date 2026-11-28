@@ -44,11 +44,13 @@ function createAdminToken() {
 }
 
 function verifyAdminToken(token) {
-  if (!token || typeof token !== 'string') return false;
+  if (typeof token !== 'string' || token.length > 768) return false;
   const parts = token.split('.');
   if (parts.length !== 2) return false;
   const [payload, signature] = parts;
-  if (!payload || !/^[a-f0-9]{64}$/i.test(signature)) return false;
+  if (!/^[a-z0-9_-]+$/i.test(payload) || !/^[a-f0-9]{64}$/i.test(signature)) return false;
+  const expected = sign(payload);
+  if (!expected || !crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'))) return false;
   let claims;
   try {
     claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
@@ -61,10 +63,8 @@ function verifyAdminToken(token) {
     || !Number.isFinite(claims?.exp)
     || !/^[a-f0-9]{32}$/i.test(String(claims?.nonce || ''))
   ) return false;
-  if (claims.iat > Date.now() + 60_000 || claims.exp <= Date.now() || claims.exp - claims.iat > TOKEN_TTL_MS) return false;
-  const expected = sign(payload);
-  if (!expected) return false;
-  return crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'));
+  const now = Date.now();
+  return claims.iat <= now + 60_000 && claims.exp > now && claims.exp > claims.iat && claims.exp - claims.iat <= TOKEN_TTL_MS;
 }
 
 function requireAdmin(req, res, next) {

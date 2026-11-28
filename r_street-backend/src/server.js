@@ -35,7 +35,7 @@ app.use((req, res, next) => {
     'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
   });
   if (isProduction) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  if (/^\/api\/(auth|admin|produtos)/.test(req.path)) res.set('Cache-Control', 'no-store');
+  if (/^\/api\/(?:auth|admin|produtos|pedidos|pagamento)(?:\/|$)/i.test(req.path)) res.set('Cache-Control', 'no-store');
   next();
 });
 
@@ -91,6 +91,7 @@ app.use(cors({
   },
   methods: ['GET','POST','PUT','PATCH','DELETE'],
   allowedHeaders: ['Content-Type','Authorization'],
+  exposedHeaders: ['Retry-After'],
 }));
 
 app.use(maintenanceGuard);
@@ -103,9 +104,9 @@ app.use('/api/webhook', express.raw({ type: 'application/json', limit: '256kb' }
 app.use('/api/produtos/upload-image', requireAdmin, express.json({ limit: '45mb' }));
 
 // ── JSON para todas as outras rotas ─────────────────────
+app.use('/api/auth/login', simpleRateLimit({ windowMs: 60 * 1000, max: 60, keyPrefix: 'login' }), express.json({ limit: '8kb' }));
 app.use(express.json({ limit: '1mb' }));
 
-app.use('/api/auth/login', simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 8, keyPrefix: 'login' }));
 app.use('/api/pagamento/criar', simpleRateLimit({ windowMs: 60 * 1000, max: 12, keyPrefix: 'pagamento' }));
 app.post('/api/admin/pedidos/:id/aviso', requireAdmin, simpleRateLimit({ windowMs: 60 * 1000, max: 5, keyPrefix: 'aviso' }));
 app.post('/api/admin/operacao/teste-email', requireAdmin, simpleRateLimit({ windowMs: 15 * 60 * 1000, max: 3, keyPrefix: 'teste-email' }));
@@ -149,8 +150,12 @@ app.use((req, res) => {
 // ── ERROR HANDLER ────────────────────────────────────────
 app.use((err, req, res, next) => {
   const status = Number(err.status) >= 400 && Number(err.status) < 600 ? Number(err.status) : 500;
-  console.error(`Erro ${req.requestId || '-'}:`, err.message);
-  const publicMessage = err.expose === true
+  // Parser messages can include excerpts of passwords or customer details.
+  const bodyError = ['entity.parse.failed', 'entity.too.large', 'request.size.invalid', 'request.aborted', 'encoding.unsupported', 'charset.unsupported'].includes(err.type);
+  console.error(`Erro ${req.requestId || '-'}:`, status, bodyError ? err.type : 'Falha na solicitação');
+  const publicMessage = bodyError
+    ? (status === 413 ? 'Solicitação muito grande.' : 'Formato da solicitação inválido.')
+    : err.expose === true
     ? (err.message || 'Requisicao invalida.')
     : status < 500
       ? 'Nao foi possivel concluir a solicitacao.'
@@ -161,7 +166,7 @@ app.use((err, req, res, next) => {
     ...(checkoutError ? { code: err.code, checkout: err.checkout || undefined } : {}) });
 });
 
-app.listen(PORT, () => {
+if (require.main === module) app.listen(PORT, () => {
   if (operationStatus().migrationWriteLock) {
     console.log('R Street Backend em migracao: novas gravacoes e tarefas periodicas pausadas.');
     return;
@@ -174,3 +179,5 @@ app.listen(PORT, () => {
   void cleanMetrics();
   console.log(`✅ R Street Backend rodando na porta ${PORT}`);
 });
+
+module.exports = app;
