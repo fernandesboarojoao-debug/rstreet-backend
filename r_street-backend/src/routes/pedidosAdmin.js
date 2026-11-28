@@ -6,6 +6,7 @@ const { notificarPedido } = require('../services/notificacoes');
 const { loadMetrics } = require('../services/metricas');
 const notifications = require('../services/notificacoes');
 const db = require('../services/db');
+const { safeTrackingUrl } = require('../services/trackingUrl');
 const { reservasAtivadas } = require('../services/reservas');
 const { operationStatus } = require('../middleware/maintenance');
 const { validateTestEmail, sendTestEmail } = require('../services/testEmail');
@@ -30,15 +31,10 @@ function safeOptionalText(value, maxLength) {
 }
 
 function safeOptionalHttpUrl(value) {
+  if (value != null && typeof value !== 'string') return undefined;
   const clean = String(value || '').trim();
   if (!clean) return null;
-  if (clean.length > 2048) return undefined;
-  try {
-    const url = new URL(clean);
-    return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined;
-  } catch {
-    return undefined;
-  }
+  return safeTrackingUrl(clean) || undefined;
 }
 
 function cleanPublicUrl(value, fallback = null, maxLength = 1000) {

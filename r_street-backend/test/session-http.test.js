@@ -45,6 +45,10 @@ test('login, private reads and maintenance work together without external servic
     t.mock.method(db,'buscarAtualizacoesPedido',async()=>[]);
     t.mock.method(db,'buscarPedido',async()=>order);
     t.mock.method(mp,'buscarPagamento',async()=>({external_reference:'42',status:'pending'}));
+    for (const body of [{id:[42],email:order.cliente_email},{id:true,email:order.cliente_email},{id:42,email:'incompleto'}]) {
+      assert.equal((await post('/api/pedidos/acompanhar',JSON.stringify(body))).status,400);
+    }
+    assert.equal((await post('/api/pedidos/confirmacao',JSON.stringify({pedido_id:42,payment_id:['123']}))).status,400);
     const track = await post('/api/pedidos/acompanhar', JSON.stringify({id:42,email:order.cliente_email}));
     assert.equal(track.status,200);
     assert.deepEqual((await track.json()).pedido,{id:42,status:'pago',total:95});

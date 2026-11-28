@@ -1,15 +1,23 @@
 // src/routes/pedidos.js
 const express = require('express');
 const db = require('../services/db');
+const { safeTrackingUrl } = require('../services/trackingUrl');
 const { requireAdmin } = require('../middleware/adminAuth');
 const { processarPagamentoMercadoPago } = require('../controllers/webhookController');
 const router = express.Router();
 
+function numericReference(value, maxDigits) {
+  if (typeof value === 'number' && (!Number.isSafeInteger(value) || value <= 0)) return '';
+  if (typeof value !== 'string' && typeof value !== 'number') return '';
+  const digits = String(value).trim();
+  return digits.length <= maxDigits && /^[1-9]\d*$/.test(digits) ? digits : '';
+}
+
 router.post('/acompanhar', async (req, res) => {
   const { id, email } = req.body || {};
-  const pedidoId = Number(id);
+  const pedidoId = Number(numericReference(id, 16));
   const emailLimpo = typeof email === 'string' ? email.trim() : '';
-  if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0 || !emailLimpo || emailLimpo.length > 254) {
+  if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0 || emailLimpo.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailLimpo)) {
     return res.status(400).json({ erro: 'Informe o numero do pedido e o e-mail da compra.' });
   }
   const pedido = await db.buscarPedidoPorIdEmail(pedidoId, emailLimpo);
@@ -18,13 +26,13 @@ router.post('/acompanhar', async (req, res) => {
   const itens = await db.buscarItensPedido(pedido.id);
   const atualizacoes = await db.buscarAtualizacoesPedido(pedido.id);
   const { status, envio_status, total, codigo_rastreio, rastreio_url, criado_em } = pedido;
-  res.json({ pedido: { id:pedido.id, status, envio_status, total, codigo_rastreio, rastreio_url, criado_em }, itens, atualizacoes: atualizacoes || [] });
+  res.json({ pedido: { id:pedido.id, status, envio_status, total, codigo_rastreio, rastreio_url: safeTrackingUrl(rastreio_url) || undefined, criado_em }, itens, atualizacoes: atualizacoes || [] });
 });
 
 router.post('/confirmacao', async (req, res) => {
   const { pedido_id, payment_id } = req.body || {};
-  const pedidoId = Number(pedido_id);
-  const paymentId = String(payment_id || '').trim();
+  const pedidoId = Number(numericReference(pedido_id, 16));
+  const paymentId = numericReference(payment_id, 30);
 
   if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0 || !/^\d{1,30}$/.test(paymentId)) {
     return res.status(400).json({ erro: 'Informe pedido e pagamento para confirmar.' });

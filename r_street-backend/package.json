@@ -24,7 +24,8 @@
     "nodemon": "3.1.14"
   },
   "overrides": {
-    "qs": "6.16.0",
+    "qs": "6.16.1",
+    "body-parser": "1.20.9",
     "proxy-addr": "2.0.8"
   }
 }

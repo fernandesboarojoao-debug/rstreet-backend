@@ -66,12 +66,7 @@ function currentOrderEvent(pedido) {
   return EVENTS[pedido.envio_status] ? pedido.envio_status : 'pagamento_aprovado';
 }
 
-function safeTrackingUrl(value) {
-  try {
-    const url = new URL(value);
-    return ['http:', 'https:'].includes(url.protocol) ? url.href : null;
-  } catch { return null; }
-}
+const { safeTrackingUrl } = require('./trackingUrl');
 
 function renderEmail(pedido, event, itens) {
   const total = Number(pedido.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });

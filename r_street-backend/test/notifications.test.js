@@ -135,3 +135,10 @@ test('notification retry stops if the order status or recipient changed', async 
     if (saved.from === undefined) delete process.env.EMAIL_FROM; else process.env.EMAIL_FROM = saved.from;
   }
 });
+test('delivery emails omit insecure saved links but retain the tracking code', () => {
+  for (const rastreio_url of ['http://example.test/objeto','https://nome@example.test/objeto']) {
+    const html = notifications.renderEmail({ id: 9, total: 10, codigo_rastreio: 'ABC42', rastreio_url }, notifications.EVENTS.enviado, []);
+    assert.match(html, /ABC42/);
+    assert.doesNotMatch(html, /example\.test\/objeto/);
+  }
+});
