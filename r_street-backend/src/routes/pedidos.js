@@ -8,8 +8,8 @@ const router = express.Router();
 router.post('/acompanhar', async (req, res) => {
   const { id, email } = req.body || {};
   const pedidoId = Number(id);
-  const emailLimpo = String(email || '').trim();
-  if (!Number.isInteger(pedidoId) || pedidoId <= 0 || !emailLimpo || emailLimpo.length > 254) {
+  const emailLimpo = typeof email === 'string' ? email.trim() : '';
+  if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0 || !emailLimpo || emailLimpo.length > 254) {
     return res.status(400).json({ erro: 'Informe o numero do pedido e o e-mail da compra.' });
   }
   const pedido = await db.buscarPedidoPorIdEmail(pedidoId, emailLimpo);
@@ -17,7 +17,8 @@ router.post('/acompanhar', async (req, res) => {
 
   const itens = await db.buscarItensPedido(pedido.id);
   const atualizacoes = await db.buscarAtualizacoesPedido(pedido.id);
-  res.json({ pedido, itens, atualizacoes: atualizacoes || [] });
+  const { status, envio_status, total, codigo_rastreio, rastreio_url, criado_em } = pedido;
+  res.json({ pedido: { id:pedido.id, status, envio_status, total, codigo_rastreio, rastreio_url, criado_em }, itens, atualizacoes: atualizacoes || [] });
 });
 
 router.post('/confirmacao', async (req, res) => {
@@ -25,18 +26,20 @@ router.post('/confirmacao', async (req, res) => {
   const pedidoId = Number(pedido_id);
   const paymentId = String(payment_id || '').trim();
 
-  if (!Number.isInteger(pedidoId) || pedidoId <= 0 || !paymentId || paymentId.length > 100) {
+  if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0 || !/^\d{1,30}$/.test(paymentId)) {
     return res.status(400).json({ erro: 'Informe pedido e pagamento para confirmar.' });
   }
 
-  const resultado = await processarPagamentoMercadoPago(paymentId);
+  const resultado = await processarPagamentoMercadoPago(paymentId, pedidoId);
   if (!resultado || Number(resultado.pedidoId) !== pedidoId) {
     return res.status(404).json({ erro: 'Pagamento nao encontrado para este pedido.' });
   }
 
   const pedido = await db.buscarPedido(pedidoId);
+  if (!pedido) return res.status(404).json({ erro: 'Pedido nao encontrado.' });
   const itens = await db.buscarItensPedido(pedidoId);
-  res.json({ pedido, itens, pagamento_status: resultado.pagamento.status });
+  const { id, status, frete_valor, frete_tipo, total, metodo_pagamento } = pedido;
+  res.json({ pedido: { id, status, frete_valor, frete_tipo, total, metodo_pagamento }, itens, pagamento_status: resultado.pagamento.status });
 });
 
 router.use(requireAdmin);

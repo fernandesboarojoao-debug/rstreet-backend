@@ -37,10 +37,10 @@ async function receberWebhook(req, res) {
   }
 }
 
-async function processarPagamentoMercadoPago(paymentId) {
+async function processarPagamentoMercadoPago(paymentId, expectedOrderId) {
   const pagamento = await mp.buscarPagamento(paymentId);
   const pedidoId = Number(pagamento.external_reference);
-  if (!Number.isInteger(pedidoId) || pedidoId <= 0) return null;
+  if (!Number.isSafeInteger(pedidoId) || pedidoId <= 0 || (expectedOrderId !== undefined && pedidoId !== expectedOrderId)) return null;
 
   const pedidoAtual = await db.buscarPedido(pedidoId);
   if (!pedidoAtual) return null;

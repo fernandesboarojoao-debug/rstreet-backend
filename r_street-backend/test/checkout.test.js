@@ -30,6 +30,13 @@ function pedidoBase(itens) {
   };
 }
 
+test('confirmation checks the provider order reference before reading or changing an order', async t => {
+  t.mock.method(mp, 'buscarPagamento', async () => ({external_reference:'43',status:'approved'}));
+  const lookup = t.mock.method(db, 'buscarPedido', async () => { throw new Error('Unexpected order lookup'); });
+  assert.equal(await processarPagamentoMercadoPago('123', 42), null);
+  assert.equal(lookup.mock.callCount(),0);
+});
+
 function stubCatalog({ estoque = 5, preco = 100, variantes = [] } = {}) {
   db.buscarProdutosPorIds = async () => [{ id: 1, nome: 'Produto Teste', preco, estoque, ativo: true }];
   db.buscarVariantesPorIds = async ids => variantes.filter(v => ids.map(Number).includes(Number(v.id)));
